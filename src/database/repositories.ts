@@ -9,18 +9,33 @@ export const saveLocalProfile = async (profile: LocalProfile): Promise<void> => 
   // Supprimer l'ancien profil
   await db.runAsync('DELETE FROM local_profile');
   
-  // Insérer le nouveau
+  // Insérer le nouveau avec service_ids
   await db.runAsync(
-    `INSERT INTO local_profile (user_id, user_uid, fullname, service_id, zone, token, saved_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [profile.user_id, profile.user_uid, profile.fullname, profile.service_id, profile.zone, profile.token, profile.saved_at]
+    `INSERT INTO local_profile (user_id, user_uid, fullname, service_id, service_ids, zone, token, saved_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [profile.user_id, profile.user_uid, profile.fullname, profile.service_id, profile.service_ids || '[]', profile.zone, profile.token, profile.saved_at]
   );
 };
 
 export const getLocalProfile = async (): Promise<LocalProfile | null> => {
   const db = await getDatabase();
-  const result = await db.getFirstAsync('SELECT * FROM local_profile LIMIT 1');
-  return result || null;
+  const result = await db.getFirstAsync('SELECT * FROM local_profile LIMIT 1') as any;
+  if (result) {
+    // S'assurer que service_ids est bien présent
+    result.service_ids = result.service_ids || '[]';
+    return result as LocalProfile;
+  }
+  return null;
+};
+
+export const getServiceIds = async (): Promise<number[]> => {
+  const profile = await getLocalProfile();
+  if (!profile) return [];
+  try {
+    return JSON.parse(profile.service_ids || '[]');
+  } catch {
+    return profile.service_id ? [profile.service_id] : [];
+  }
 };
 
 export const clearLocalProfile = async (): Promise<void> => {
@@ -51,6 +66,32 @@ export const clearLocalTerminal = async (): Promise<void> => {
 };
 
 // ==================== TAX CATEGORIES ====================
+
+// Compter le nombre de catégories par service
+export const getCategoriesCountByService = async (): Promise<{ service_id: number; count: number }[]> => {
+  const db = await getDatabase();
+  return await db.getAllAsync(
+    'SELECT service_id, COUNT(*) as count FROM local_tax_categorie WHERE is_active = 1 GROUP BY service_id'
+  ) as { service_id: number; count: number }[];
+};
+
+// Obtenir le nombre total de catégories
+export const getTotalCategoriesCount = async (): Promise<number> => {
+  const db = await getDatabase();
+  const result = await db.getFirstAsync(
+    'SELECT COUNT(*) as count FROM local_tax_categorie WHERE is_active = 1'
+  ) as { count: number } | null;
+  return result?.count || 0;
+};
+
+// Obtenir le nombre total de types de taxes
+export const getTotalTaxTypesCount = async (): Promise<number> => {
+  const db = await getDatabase();
+  const result = await db.getFirstAsync(
+    'SELECT COUNT(*) as count FROM local_tax_types WHERE is_active = 1'
+  ) as { count: number } | null;
+  return result?.count || 0;
+};
 
 export const saveTaxCategories = async (categories: LocalTaxCategorie[]): Promise<void> => {
   const db = await getDatabase();
@@ -235,6 +276,7 @@ export const getSyncState = async (key: string): Promise<string | null> => {
 
 // ==================== UTILITIES ====================
 
+// Efface toutes les données (utilisé lors de la déconnexion manuelle)
 export const clearAllData = async (): Promise<void> => {
   const db = await getDatabase();
   await db.runAsync('DELETE FROM local_payments_queue');
@@ -243,4 +285,12 @@ export const clearAllData = async (): Promise<void> => {
   await db.runAsync('DELETE FROM local_terminal');
   await db.runAsync('DELETE FROM local_profile');
   await db.runAsync('DELETE FROM sync_state');
+};
+
+// Efface uniquement les données d'authentification (conserve les paiements)
+export const clearAuthData = async (): Promise<void> => {
+  const db = await getDatabase();
+  await db.runAsync('DELETE FROM local_terminal');
+  await db.runAsync('DELETE FROM local_profile');
+  // On garde les paiements et les données de référence
 };

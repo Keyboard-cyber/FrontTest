@@ -6,6 +6,7 @@ import {
   saveLocalProfile, 
   clearLocalProfile,
   clearAllData,
+  clearAuthData,
   saveTaxCategories,
   saveTaxTypes,
   saveLocalTerminal,
@@ -42,6 +43,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [user, setUser] = useState<User | null>(null);
 
+  // Fonction pour gérer la déconnexion silencieuse (token expiré)
+  const handleTokenExpired = async () => {
+    console.log('🔒 Token expiré - Déconnexion automatique');
+    // Nettoyer seulement les données d'auth, conserver les paiements
+    await clearAuthData();
+    setProfile(null);
+    setUser(null);
+    setIsAuthenticated(false);
+  };
+
   // Initialiser l'application
   useEffect(() => {
     const init = async () => {
@@ -49,12 +60,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Initialiser la base de données
         await initializeDatabase();
         
+        // Configurer le callback pour les erreurs 401
+        apiService.onUnauthorized(handleTokenExpired);
+        
         // Vérifier s'il y a un profil local
         const localProfile = await getLocalProfile();
         
         if (localProfile) {
           setProfile(localProfile);
           setIsAuthenticated(true);
+          
+          // Charger le token dans le service API
+          if (localProfile.token) {
+            apiService.setToken(localProfile.token);
+            console.log('✅ Token restauré depuis le profil local');
+          }
           
           // Essayer de récupérer les infos utilisateur à jour
           try {
@@ -149,19 +169,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         initialData = { terminals: [], taxCategories: [], taxTypes: [], services: [] };
       }
       
-      // Récupérer le service_id depuis le tableau services si pas de service_id direct
+      // Récupérer tous les service_ids depuis le tableau services
+      const services = userData.services || initialData.services || [];
+      const serviceIds = services.map((s: any) => s.id);
+      
+      // Le service_id principal (premier ou service_id direct)
       let serviceId = userData.service_id || 0;
-      if (!serviceId && userData.services && userData.services.length > 0) {
-        serviceId = userData.services[0].id;
-        console.log('Service ID récupéré depuis le tableau services:', serviceId);
+      if (!serviceId && serviceIds.length > 0) {
+        serviceId = serviceIds[0];
+        console.log('Service ID principal récupéré depuis le tableau services:', serviceId);
       }
       
-      // 5. Sauvegarder le profil local
+      // S'assurer que le service_id principal est dans la liste
+      if (serviceId && !serviceIds.includes(serviceId)) {
+        serviceIds.push(serviceId);
+      }
+      
+      console.log('Tous les service IDs de l\'agent:', serviceIds);
+      
+      // 5. Sauvegarder le profil local avec tous les services
       const localProfile: LocalProfile = {
         user_id: userData.id,
         user_uid: userData.uid || userData.user_uid || '',
         fullname: userData.fullname || userData.name || userData.full_name || '',
         service_id: serviceId,
+        service_ids: JSON.stringify(serviceIds), // Tous les IDs de services
         zone: userData.zone || null,
         token: token,
         saved_at: new Date().toISOString(),

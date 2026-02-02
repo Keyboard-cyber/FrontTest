@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { CREATE_TABLES_SQL, CREATE_INDEXES_SQL } from './schema';
 
-const DB_NAME = 'taxe_agent_v2.db'; // Version 2 - ajout terminal_id
+const DB_NAME = 'taxe_agent_v3.db'; // Version 3 - ajout service_ids (array)
 
 let db: any = null;
 

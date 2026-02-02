@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS local_profile (
   user_uid TEXT NOT NULL,
   fullname TEXT NOT NULL,
   service_id INTEGER NOT NULL,
+  service_ids TEXT DEFAULT '[]',
   zone TEXT,
   token TEXT,
   saved_at TEXT NOT NULL

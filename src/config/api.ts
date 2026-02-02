@@ -10,6 +10,10 @@ export const ENDPOINTS = {
   LOGOUT: '/logout',
   ME: '/me',
 
+  // Services
+  SERVICES: '/services',
+  AGENT_SERVICES: '/agent-services',
+
   // Tax Categories
   TAX_CATEGORIES: '/tax-categories',
 

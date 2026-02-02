@@ -17,6 +17,7 @@ export interface LocalProfile {
   user_uid: string;
   fullname: string;
   service_id: number;
+  service_ids: string; // JSON array of service IDs: "[1,2,3]"
   zone: string | null;
   token: string;
   saved_at: string;

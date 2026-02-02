@@ -38,6 +38,11 @@ class SyncService {
         return { success: false, error: 'Non authentifié' };
       }
 
+      // S'assurer que le token est chargé dans le service API
+      if (profile.token) {
+        apiService.setToken(profile.token);
+      }
+
       // Récupérer les catégories
       const categories = await apiService.getTaxCategories();
       const localCategories: LocalTaxCategorie[] = categories.map((cat: TaxCategorie) => ({
@@ -90,6 +95,15 @@ class SyncService {
       const online = await this.isOnline();
       if (!online) {
         result.errors.push('Pas de connexion Internet');
+        return result;
+      }
+
+      // S'assurer que le token est chargé
+      const profile = await getLocalProfile();
+      if (profile?.token) {
+        apiService.setToken(profile.token);
+      } else {
+        result.errors.push('Non authentifié');
         return result;
       }
 

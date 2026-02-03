@@ -57,6 +57,7 @@ class ReceiptService {
       agentName, 
       categoryLabel, 
       typeLabel,
+      serviceLabel = 'ETAT-CIVIL',
       terminalUid,
       agentUid,
       cityName = 'KOLWEZI'
@@ -64,7 +65,7 @@ class ReceiptService {
     
     const lines: string[] = [];
 
-    // En-tête République
+    // En-tête République (formaté comme spécifié)
     lines.push('');
     lines.push(this.center('REPUBLIQUE DEMOCRATIQUE'));
     lines.push(this.center('DU CONGO'));
@@ -84,14 +85,9 @@ class ReceiptService {
     lines.push(payment.payer_name);
     lines.push('');
 
-    // Taxe (type de taxe)
-    lines.push('Taxe :');
+    // Type de taxe
+    lines.push('Type de taxe :');
     lines.push(typeLabel);
-    lines.push('');
-
-    // Catégorie
-    lines.push('Categorie :');
-    lines.push(categoryLabel);
     lines.push('');
 
     // Montant et Date
@@ -100,15 +96,27 @@ class ReceiptService {
     lines.push('');
 
     // Informations agent
-    lines.push(`Percepteur : ${agentName}`);
-    lines.push(`Terminal   : ${terminalUid || `T-${payment.terminal_id}`}`);
-    lines.push(`Agent ID   : ${agentUid || `A-${String(payment.user_id).padStart(3, '0')}`}`);
+    lines.push(`Percepteur :`);
+    lines.push(agentName);
     lines.push('');
 
-    // Section QR Code (le QR sera affiché visuellement)
+    // Terminal
+    lines.push(`Terminal :`);
+    lines.push(terminalUid || `T-${payment.terminal_id}`);
+    lines.push('');
+
+    // Séparateur
     lines.push(SEPARATOR);
-    lines.push(this.center('SCANNEZ LE QR CODE'));
+    lines.push('');
+
+    // QR Code placeholder
+    lines.push(this.center('[QR CODE ICI]'));
+    lines.push('');
     lines.push(SEPARATOR);
+
+    // Footer
+    lines.push(this.center('Merci.'));
+    lines.push('');
 
     return lines;
   }
@@ -118,14 +126,21 @@ class ReceiptService {
     return this.generateReceipt(data).join('\n');
   }
 
-  // Générer les données pour QR Code
+  // Générer les données pour QR Code (contient la signature)
   generateQrData(payment: LocalPaymentQueue): string {
-    return JSON.stringify({
-      uuid: payment.local_uuid,
-      amount: payment.total_amount,
-      date: payment.paid_at,
-      receipt: payment.server_receipt_no,
-    });
+    // Utiliser directement la signature QR stockée
+    // Format: uuid|amount|date|user_id
+    console.log('=== GENERATE QR DATA ===');
+    console.log('Payment UUID:', payment.local_uuid);
+    console.log('Payment qr_signature:', payment.qr_signature);
+    
+    if (!payment.qr_signature) {
+      console.error('QR Signature manquante!');
+      // Générer une signature de secours si manquante
+      return `${payment.local_uuid}|${payment.total_amount}|${payment.paid_at}|${payment.user_id}`;
+    }
+    
+    return payment.qr_signature;
   }
 
   // Générer les commandes ESC/POS pour imprimante thermique

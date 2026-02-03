@@ -9,7 +9,7 @@ export default function Index() {
   if (isLoading) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>Taxe Mobile Agent</Text>
+        <Text style={styles.title}>Smart Taxe</Text>
         <ActivityIndicator size="large" color="#fff" style={styles.loader} />
         <Text style={styles.subtitle}>Chargement...</Text>
       </View>

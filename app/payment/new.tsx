@@ -15,7 +15,9 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { v4 as uuidv4 } from 'uuid';
-import { useAuth, useSync } from '../../src/contexts';
+import { useAuth, useSync, usePayment } from '../../src/contexts';
+import { useSyncWithPaymentUpdates } from '../../src/hooks';
+import { notificationService } from '../../src/services/notification.service';
 import { 
   getTaxCategories, 
   getTaxTypes, 
@@ -23,11 +25,13 @@ import {
   getLocalTerminal,
 } from '../../src/database';
 import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue } from '../../src/types';
-import { Colors, Spacing, BorderRadius, FontSizes, FontWeights, Shadows } from '../../src/theme';
+import { Colors, Shadows } from '../../src/theme';
+import { scale, rs, rf, rr, wp } from '../../src/utils/responsive';
 
 export default function NewPaymentScreen() {
   const { profile } = useAuth();
-  const { refreshData, isOnline, syncPayments } = useSync();
+  const { refreshData, isOnline, syncPayments } = useSyncWithPaymentUpdates();
+  const { addPaymentToUI } = usePayment();
 
   const [categories, setCategories] = useState<LocalTaxCategorie[]>([]);
   const [taxTypes, setTaxTypes] = useState<LocalTaxType[]>([]);
@@ -166,6 +170,12 @@ export default function NewPaymentScreen() {
       // 1. Ajouter le paiement localement (historique)
       await addPaymentToQueue(payment);
       
+      // Émettre l'événement pour mettre à jour l'historique en temps réel
+      addPaymentToUI(payment);
+      
+      // Notification locale
+      await notificationService.notifyPaymentSuccess(unitPrice, payerName);
+      
       // 2. Synchroniser OBLIGATOIREMENT avant impression
       let syncSuccess = false;
       if (isOnline) {
@@ -246,7 +256,7 @@ export default function NewPaymentScreen() {
           <ScrollView 
             style={styles.stepContainer} 
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 40 }}
+            contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
           >
             <Text style={styles.stepTitle}>Catégorie</Text>
             <Text style={styles.stepSubtitle}>Sélectionnez une catégorie de taxe</Text>
@@ -279,7 +289,7 @@ export default function NewPaymentScreen() {
           <ScrollView 
             style={styles.stepContainer} 
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 40 }}
+            contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
           >
             <TouchableOpacity style={styles.backButton} onPress={() => setStep('category')}>
               <Ionicons name="arrow-back" size={20} color={Colors.primary} />
@@ -326,7 +336,7 @@ export default function NewPaymentScreen() {
             <ScrollView 
               style={styles.stepContainer} 
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 40 }}
+              contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
             >
               <TouchableOpacity style={styles.backButton} onPress={() => setStep('type')}>
                 <Ionicons name="arrow-back" size={20} color={Colors.primary} />
@@ -369,7 +379,7 @@ export default function NewPaymentScreen() {
                 <Text style={styles.label}>Montant *</Text>
                 <View style={[styles.inputWrapper, { backgroundColor: Colors.border }]}>
                   <Text style={styles.currencyPrefix}>FC</Text>
-                  <Text style={[styles.input, { color: Colors.textPrimary, paddingVertical: Spacing.md }]}>
+                  <Text style={[styles.input, { color: Colors.textPrimary, paddingVertical: rs.md }]}>
                     {formatCurrency(parseFloat(customAmount) || 0)}
                   </Text>
                 </View>
@@ -443,7 +453,7 @@ export default function NewPaymentScreen() {
           <ScrollView 
             style={styles.stepContainer} 
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 40 }}
+            contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
           >
             <TouchableOpacity style={styles.backButton} onPress={() => setStep('details')}>
               <Ionicons name="arrow-back" size={20} color={Colors.primary} />
@@ -576,15 +586,15 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   loadingText: {
-    marginTop: Spacing.md,
+    marginTop: rs.md,
     color: Colors.textSecondary,
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
   },
   progressContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: Spacing.lg,
+    paddingVertical: rs.lg,
     backgroundColor: Colors.backgroundSecondary,
   },
   progressItem: {
@@ -592,9 +602,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   progressDot: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: scale(20),
+    height: scale(20),
+    borderRadius: scale(10),
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -607,9 +617,9 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   progressLine: {
-    width: 30,
+    width: scale(30),
     height: 2,
-    marginHorizontal: Spacing.xs,
+    marginHorizontal: rs.xs,
   },
   progressLineActive: {
     backgroundColor: Colors.primary,
@@ -621,106 +631,106 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   stepContentPadding: {
-    padding: Spacing.lg,
+    padding: rs.lg,
   },
   stepTitle: {
-    fontSize: FontSizes.xxl,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.xxl,
+    fontWeight: '700',
     color: Colors.textPrimary,
-    marginBottom: Spacing.xs,
+    marginBottom: rs.xs,
   },
   stepSubtitle: {
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
     color: Colors.textSecondary,
-    marginBottom: Spacing.xl,
+    marginBottom: rs.xl,
   },
   backButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.lg,
-    gap: Spacing.sm,
+    marginBottom: rs.lg,
+    gap: rs.sm,
   },
   backText: {
     color: Colors.primary,
-    fontSize: FontSizes.md,
-    fontWeight: FontWeights.medium,
+    fontSize: rf.md,
+    fontWeight: '500',
   },
   optionCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.backgroundCard,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
-    marginBottom: Spacing.md,
+    borderRadius: rr.xl,
+    padding: rs.lg,
+    marginBottom: rs.md,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   optionIconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: BorderRadius.md,
+    width: scale(44),
+    height: scale(44),
+    borderRadius: rr.md,
     backgroundColor: 'rgba(123, 97, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   optionContent: {
     flex: 1,
-    marginLeft: Spacing.md,
+    marginLeft: rs.md,
   },
   optionText: {
     flex: 1,
-    fontSize: FontSizes.lg,
+    fontSize: rf.lg,
     color: Colors.textPrimary,
-    marginLeft: Spacing.md,
-    fontWeight: FontWeights.medium,
+    marginLeft: rs.md,
+    fontWeight: '500',
   },
   optionAmount: {
-    fontSize: FontSizes.sm,
+    fontSize: rf.sm,
     color: Colors.accentGreen,
-    fontWeight: FontWeights.semibold,
-    marginTop: Spacing.xs,
+    fontWeight: '600',
+    marginTop: rs.xs,
   },
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.xxl * 2,
+    paddingVertical: rs.xxl * 2,
   },
   emptyText: {
     textAlign: 'center',
     color: Colors.textMuted,
-    marginTop: Spacing.md,
-    fontSize: FontSizes.md,
+    marginTop: rs.md,
+    fontSize: rf.md,
   },
   inputGroup: {
-    marginBottom: Spacing.lg,
+    marginBottom: rs.lg,
   },
   label: {
-    fontSize: FontSizes.sm,
-    fontWeight: FontWeights.semibold,
+    fontSize: rf.sm,
+    fontWeight: '600',
     color: Colors.textSecondary,
-    marginBottom: Spacing.sm,
+    marginBottom: rs.sm,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.backgroundCard,
-    borderRadius: BorderRadius.lg,
+    borderRadius: rr.lg,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   inputIcon: {
-    paddingLeft: Spacing.md,
+    paddingLeft: rs.md,
   },
   currencyPrefix: {
-    paddingLeft: Spacing.md,
+    paddingLeft: rs.md,
     color: Colors.textMuted,
-    fontSize: FontSizes.md,
-    fontWeight: FontWeights.medium,
+    fontSize: rf.md,
+    fontWeight: '500',
   },
   input: {
     flex: 1,
-    padding: Spacing.md,
-    fontSize: FontSizes.lg,
+    padding: rs.md,
+    fontSize: rf.lg,
     color: Colors.textPrimary,
   },
   row: {
@@ -728,27 +738,27 @@ const styles = StyleSheet.create({
   },
   totalContainer: {
     backgroundColor: Colors.backgroundCard,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.xl,
-    marginVertical: Spacing.lg,
+    borderRadius: rr.xl,
+    padding: rs.xl,
+    marginVertical: rs.lg,
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: 'center',
   },
   totalLabel: {
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
     color: Colors.textSecondary,
-    marginBottom: Spacing.sm,
+    marginBottom: rs.sm,
   },
   totalAmount: {
-    fontSize: FontSizes.hero,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.hero,
+    fontWeight: '700',
     color: Colors.primary,
   },
   submitButton: {
-    borderRadius: BorderRadius.lg,
+    borderRadius: rr.lg,
     overflow: 'hidden',
-    marginBottom: Spacing.lg,
+    marginBottom: rs.lg,
     ...Shadows.md,
   },
   buttonDisabled: {
@@ -758,57 +768,57 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md + 2,
-    paddingHorizontal: Spacing.xl,
-    gap: Spacing.sm,
+    paddingVertical: rs.md + 2,
+    paddingHorizontal: rs.xl,
+    gap: rs.sm,
   },
   submitButtonText: {
     color: Colors.textPrimary,
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.semibold,
+    fontSize: rf.lg,
+    fontWeight: '600',
   },
   summaryCard: {
     backgroundColor: Colors.backgroundCard,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
-    marginBottom: Spacing.lg,
+    borderRadius: rr.xl,
+    padding: rs.lg,
+    marginBottom: rs.lg,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   summaryRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: Spacing.md,
+    paddingVertical: rs.md,
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
   summaryLabel: {
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
     color: Colors.textSecondary,
   },
   summaryValue: {
-    fontSize: FontSizes.md,
-    fontWeight: FontWeights.semibold,
+    fontSize: rf.md,
+    fontWeight: '600',
     color: Colors.textPrimary,
     maxWidth: '60%',
     textAlign: 'right',
   },
   totalCard: {
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.xl,
-    marginBottom: Spacing.lg,
+    borderRadius: rr.xl,
+    padding: rs.xl,
+    marginBottom: rs.lg,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: Colors.border,
   },
   totalCardLabel: {
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
     color: Colors.textSecondary,
-    marginBottom: Spacing.sm,
+    marginBottom: rs.sm,
   },
   totalCardAmount: {
-    fontSize: FontSizes.hero,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.hero,
+    fontWeight: '700',
     color: Colors.textPrimary,
   },
 });

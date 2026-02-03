@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { syncService } from '../services';
+import { notificationService } from '../services/notification.service';
 import { 
   getPendingPayments, 
   getTaxCategories, 
   getTaxTypes,
+  getPaymentByUuid,
 } from '../database';
 import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue } from '../types';
 import { useAuth } from './AuthContext';
@@ -134,6 +136,15 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     try {
       const result = await syncService.syncPendingPayments();
       await refreshData();
+      
+      // Notifications
+      if (result.synced > 0) {
+        await notificationService.notifySyncComplete(result.synced);
+      }
+      if (result.failed > 0) {
+        await notificationService.notifySyncError(result.failed);
+      }
+      
       return { synced: result.synced, failed: result.failed };
     } catch (error) {
       console.error('Erreur sync payments:', error);

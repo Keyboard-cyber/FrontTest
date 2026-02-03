@@ -19,6 +19,7 @@ import {
   getTaxTypes, 
   addPaymentToQueue,
   getLocalTerminal,
+  getServiceIds,
 } from '../../database';
 import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue } from '../../types';
 
@@ -55,7 +56,13 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
 
   const loadData = async () => {
     try {
-      const cats = await getTaxCategories(profile?.service_id);
+      // Récupérer tous les services de l'agent
+      const serviceIds = await getServiceIds();
+      console.log('Services de l\'agent:', serviceIds);
+      
+      // Charger les catégories pour tous les services de l'agent
+      const cats = await getTaxCategories(serviceIds.length > 0 ? serviceIds : undefined);
+      console.log(`${cats.length} catégories chargées pour les services [${serviceIds.join(', ')}]`);
       setCategories(cats);
       
       const types = await getTaxTypes();

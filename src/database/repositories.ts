@@ -109,14 +109,19 @@ export const saveTaxCategories = async (categories: LocalTaxCategorie[]): Promis
   }
 };
 
-export const getTaxCategories = async (serviceId?: number): Promise<LocalTaxCategorie[]> => {
+export const getTaxCategories = async (serviceIds?: number | number[]): Promise<LocalTaxCategorie[]> => {
   const db = await getDatabase();
   
-  if (serviceId) {
-    return await db.getAllAsync(
-      'SELECT * FROM local_tax_categorie WHERE service_id = ? AND is_active = 1 ORDER BY label',
-      [serviceId]
-    ) as LocalTaxCategorie[];
+  // Convertir en tableau si c'est un nombre unique
+  if (serviceIds !== undefined) {
+    const ids = Array.isArray(serviceIds) ? serviceIds : [serviceIds];
+    if (ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(',');
+      return await db.getAllAsync(
+        `SELECT * FROM local_tax_categorie WHERE service_id IN (${placeholders}) AND is_active = 1 ORDER BY label`,
+        ids
+      ) as LocalTaxCategorie[];
+    }
   }
   
   return await db.getAllAsync(

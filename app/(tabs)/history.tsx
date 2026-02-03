@@ -1,246 +1,529 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  SectionList,
   TouchableOpacity,
-  RefreshControl,
   TextInput,
+  RefreshControl,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
-import { Link } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../../src/contexts';
-import { getAllPayments, getTaxCategorieById, getTaxTypeById } from '../../src/database';
+import { useFocusEffect } from '@react-navigation/native';
+import { getAllPayments, getTaxCategorieById, getTaxTypeById, getLocalTerminal } from '../../src/database';
+import { syncService } from '../../src/services/sync.service';
+import { printerService } from '../../src/services/printer.service';
+import { receiptService } from '../../src/services/receipt.service';
+import { useAuth } from '../../src/contexts/AuthContext';
 import { LocalPaymentQueue } from '../../src/types';
-import { Colors, Spacing, BorderRadius, FontSizes, FontWeights, Shadows } from '../../src/theme';
 
-interface PaymentWithDetails extends LocalPaymentQueue {
-  categoryLabel?: string;
-  typeLabel?: string;
+// Type étendu avec labels pour l'affichage
+interface Payment extends LocalPaymentQueue {
+  uuid: string;
+  sync_status: string;
+  tax_type_label?: string;
+  tax_categorie_label?: string;
 }
 
+// Types pour les filtres
+type StatusFilter = 'ALL' | 'PENDING' | 'SYNCED' | 'FAILED';
+type PeriodFilter = 'ALL' | 'TODAY' | 'WEEK' | 'MONTH';
+
+// Interface pour les sections groupées par jour
+interface PaymentSection {
+  title: string;
+  date: string;
+  data: Payment[];
+  totalAmount: number;
+  count: number;
+}
+
+// Mapper les données de la DB vers le format Payment
+const mapToPayment = (item: LocalPaymentQueue): Payment => ({
+  ...item,
+  uuid: item.local_uuid,
+  sync_status: item.status.toLowerCase(),
+  tax_type_label: undefined,
+  tax_categorie_label: undefined,
+});
+
 export default function HistoryScreen() {
-  const { profile } = useAuth();
-  const [payments, setPayments] = useState<PaymentWithDetails[]>([]);
-  const [filteredPayments, setFilteredPayments] = useState<PaymentWithDetails[]>([]);
+  const { user } = useAuth();
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'ALL' | 'PENDING' | 'SYNCED' | 'FAILED'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('ALL');
 
-  const loadPayments = async () => {
+  // Charger les paiements
+  const loadPayments = useCallback(async () => {
     try {
-      const allPayments = await getAllPayments();
-      
-      const enrichedPayments = await Promise.all(
-        allPayments.map(async (p) => {
-          const category = await getTaxCategorieById(p.tax_categorie_id);
-          const type = await getTaxTypeById(p.tax_type_id);
-          return {
-            ...p,
-            categoryLabel: category?.label || 'N/A',
-            typeLabel: type?.label || 'N/A',
-          };
-        })
-      );
-      
-      setPayments(enrichedPayments);
-      applyFilters(enrichedPayments, searchQuery, filterStatus);
+      const data = await getAllPayments();
+      const mapped = data.map(mapToPayment);
+      setPayments(mapped);
     } catch (error) {
-      console.error('Erreur chargement historique:', error);
+      console.error('Erreur chargement paiements:', error);
+    } finally {
+      setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadPayments();
   }, []);
 
-  const applyFilters = (
-    data: PaymentWithDetails[],
-    query: string,
-    status: 'ALL' | 'PENDING' | 'SYNCED' | 'FAILED'
-  ) => {
-    let filtered = [...data];
-
-    if (status !== 'ALL') {
-      filtered = filtered.filter((p) => p.status === status);
-    }
-
-    if (query.trim()) {
-      const lowerQuery = query.toLowerCase();
-      filtered = filtered.filter(
-        (p) =>
-          p.payer_name.toLowerCase().includes(lowerQuery) ||
-          p.payer_phone?.toLowerCase().includes(lowerQuery) ||
-          p.local_uuid.toLowerCase().includes(lowerQuery)
-      );
-    }
-
-    setFilteredPayments(filtered);
-  };
-
-  useEffect(() => {
-    applyFilters(payments, searchQuery, filterStatus);
-  }, [searchQuery, filterStatus]);
-
-  const onRefresh = async () => {
+  // Rafraîchir les paiements
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadPayments();
     setRefreshing(false);
+  }, [loadPayments]);
+
+  // Recharger quand l'écran est focalisé
+  useFocusEffect(
+    useCallback(() => {
+      loadPayments();
+    }, [loadPayments])
+  );
+
+  // Formater la date pour le titre de section
+  const formatSectionDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+
+    // Comparer les dates sans l'heure
+    const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const yesterdayOnly = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate());
+
+    if (dateOnly.getTime() === todayOnly.getTime()) {
+      return "Aujourd'hui";
+    } else if (dateOnly.getTime() === yesterdayOnly.getTime()) {
+      return 'Hier';
+    } else {
+      return date.toLocaleDateString('fr-FR', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      });
+    }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('fr-FR', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount) + ' FC';
+  // Filtrer par période
+  const filterByPeriod = (payment: Payment): boolean => {
+    if (periodFilter === 'ALL') return true;
+
+    const paymentDate = new Date(payment.paid_at);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    switch (periodFilter) {
+      case 'TODAY':
+        const todayEnd = new Date(today);
+        todayEnd.setHours(23, 59, 59, 999);
+        return paymentDate >= today && paymentDate <= todayEnd;
+      case 'WEEK':
+        const weekAgo = new Date(today);
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        return paymentDate >= weekAgo;
+      case 'MONTH':
+        const monthAgo = new Date(today);
+        monthAgo.setMonth(monthAgo.getMonth() - 1);
+        return paymentDate >= monthAgo;
+      default:
+        return true;
+    }
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('fr-FR', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
+  // Filtrer par statut
+  const filterByStatus = (payment: Payment): boolean => {
+    if (statusFilter === 'ALL') return true;
+
+    switch (statusFilter) {
+      case 'PENDING':
+        return payment.sync_status === 'pending';
+      case 'SYNCED':
+        return payment.sync_status === 'synced';
+      case 'FAILED':
+        return payment.sync_status === 'failed';
+      default:
+        return true;
+    }
+  };
+
+  // Filtrer par recherche
+  const filterBySearch = (payment: Payment): boolean => {
+    if (!searchQuery.trim()) return true;
+
+    const query = searchQuery.toLowerCase().trim();
+    return (
+      payment.payer_name.toLowerCase().includes(query) ||
+      (payment.payer_phone?.includes(query) ?? false) ||
+      payment.uuid.toLowerCase().includes(query) ||
+      (payment.tax_type_label?.toLowerCase().includes(query) ?? false) ||
+      (payment.tax_categorie_label?.toLowerCase().includes(query) ?? false)
+    );
+  };
+
+  // Appliquer tous les filtres et grouper par jour
+  const filteredSections = useMemo((): PaymentSection[] => {
+    // Filtrer les paiements
+    const filtered = payments
+      .filter(filterByPeriod)
+      .filter(filterByStatus)
+      .filter(filterBySearch);
+
+    // Grouper par jour
+    const grouped = filtered.reduce<Record<string, Payment[]>>((acc, payment) => {
+      const dateKey = new Date(payment.paid_at).toISOString().split('T')[0];
+      if (!acc[dateKey]) {
+        acc[dateKey] = [];
+      }
+      acc[dateKey].push(payment);
+      return acc;
+    }, {});
+
+    // Convertir en sections triées par date décroissante
+    const sections = Object.entries(grouped)
+      .map(([date, items]: [string, Payment[]]) => ({
+        title: formatSectionDate(date),
+        date,
+        data: items.sort((a: Payment, b: Payment) => new Date(b.paid_at).getTime() - new Date(a.paid_at).getTime()),
+        totalAmount: items.reduce((sum: number, p: Payment) => sum + p.total_amount, 0),
+        count: items.length,
+      }))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return sections;
+  }, [payments, searchQuery, statusFilter, periodFilter]);
+
+  // Statistiques globales
+  const stats = useMemo(() => {
+    const filtered = payments
+      .filter(filterByPeriod)
+      .filter(filterByStatus)
+      .filter(filterBySearch);
+
+    return {
+      count: filtered.length,
+      total: filtered.reduce((sum, p) => sum + p.total_amount, 0),
+      synced: filtered.filter((p) => p.sync_status === 'synced').length,
+      pending: filtered.filter((p) => p.sync_status === 'pending').length,
+    };
+  }, [payments, searchQuery, statusFilter, periodFilter]);
+
+  // Synchroniser tous les paiements en attente
+  const handleSyncAll = async () => {
+    setSyncing(true);
+    try {
+      const result = await syncService.syncPendingPayments();
+      await loadPayments();
+      Alert.alert(
+        'Synchronisation',
+        `${result.synced} paiement(s) synchronisé(s)\n${result.failed} échec(s)`
+      );
+    } catch (error) {
+      Alert.alert('Erreur', 'La synchronisation a échoué');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Imprimer un reçu
+  const handlePrint = async (payment: Payment) => {
+    try {
+      // Récupérer les informations de catégorie, type et terminal
+      const [categorie, taxType, terminal] = await Promise.all([
+        getTaxCategorieById(payment.tax_categorie_id),
+        getTaxTypeById(payment.tax_type_id),
+        getLocalTerminal(),
+      ]);
+
+      // Générer le reçu avec le format officiel
+      const receiptText = receiptService.generateReceiptText({
+        payment: {
+          ...payment,
+          local_uuid: payment.uuid,
+        } as LocalPaymentQueue,
+        agentName: user?.fullname || 'Agent',
+        agentZone: user?.zone || 'Zone',
+        categoryLabel: categorie?.label || 'Catégorie inconnue',
+        typeLabel: taxType?.label || 'Type inconnu',
+        terminalUid: terminal?.terminal_uid || `T-${payment.terminal_id}`,
+        agentUid: user?.uid,
+        cityName: 'KOLWEZI',
+      });
+
+      // Générer les données QR
+      const qrData = receiptService.generateQrData({
+        ...payment,
+        local_uuid: payment.uuid,
+      } as LocalPaymentQueue);
+
+      // Imprimer
+      await printerService.printReceipt(receiptText, qrData);
+    } catch (error) {
+      console.error('Erreur impression:', error);
+      Alert.alert('Erreur', "Impossible d'imprimer le reçu");
+    }
+  };
+
+  // Obtenir la couleur du statut
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'synced':
+        return '#4CAF50';
+      case 'pending':
+        return '#FFA000';
+      case 'failed':
+        return '#F44336';
+      default:
+        return '#9E9E9E';
+    }
+  };
+
+  // Obtenir l'icône du statut
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'synced':
+        return 'cloud-done';
+      case 'pending':
+        return 'cloud-upload';
+      case 'failed':
+        return 'cloud-offline';
+      default:
+        return 'help-circle';
+    }
+  };
+
+  // Formater le montant
+  const formatAmount = (amount: number) => {
+    return new Intl.NumberFormat('fr-FR').format(amount) + ' FC';
+  };
+
+  // Formater l'heure
+  const formatTime = (dateStr: string) => {
+    return new Date(dateStr).toLocaleTimeString('fr-FR', {
       hour: '2-digit',
       minute: '2-digit',
     });
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'SYNCED': return Colors.success;
-      case 'PENDING': return Colors.warning;
-      case 'FAILED': return Colors.error;
-      default: return Colors.textMuted;
-    }
-  };
-
-  const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'SYNCED': return 'Synchronisé';
-      case 'PENDING': return 'En attente';
-      case 'FAILED': return 'Échoué';
-      default: return status;
-    }
-  };
-
-  const renderPaymentItem = ({ item }: { item: PaymentWithDetails }) => (
-    <Link href={{ pathname: '/payment/receipt', params: { uuid: item.local_uuid } }} asChild>
-      <TouchableOpacity style={styles.paymentCard} activeOpacity={0.7}>
-        <View style={styles.paymentHeader}>
-          <View style={styles.paymentInfo}>
-            <Text style={styles.payerName}>{item.payer_name}</Text>
-            <Text style={styles.paymentType}>{item.typeLabel}</Text>
-          </View>
-          <View style={styles.paymentAmount}>
-            <Text style={styles.amountText}>{formatCurrency(item.total_amount)}</Text>
-            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '20' }]}>
-              <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
-              <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
-                {getStatusLabel(item.status)}
-              </Text>
-            </View>
-          </View>
+  // Rendu d'un paiement
+  const renderPayment = ({ item }: { item: Payment }) => (
+    <TouchableOpacity style={styles.paymentCard} onPress={() => handlePrint(item)}>
+      <View style={styles.paymentHeader}>
+        <View style={styles.paymentInfo}>
+          <Text style={styles.payerName}>{item.payer_name}</Text>
+          <Text style={styles.payerPhone}>{item.payer_phone}</Text>
         </View>
-        <View style={styles.paymentFooter}>
-          <Ionicons name="time-outline" size={14} color={Colors.textMuted} />
-          <Text style={styles.dateText}>{formatDate(item.paid_at)}</Text>
-          {item.server_receipt_no && (
-            <>
-              <View style={styles.footerDivider} />
-              <Ionicons name="document-text-outline" size={14} color={Colors.textMuted} />
-              <Text style={styles.receiptNo}>{item.server_receipt_no}</Text>
-            </>
-          )}
+        <View style={styles.paymentStatus}>
+          <Ionicons
+            name={getStatusIcon(item.sync_status) as any}
+            size={20}
+            color={getStatusColor(item.sync_status)}
+          />
         </View>
-      </TouchableOpacity>
-    </Link>
-  );
+      </View>
 
-  const StatusFilterButton = ({ 
-    status, 
-    label 
-  }: { 
-    status: 'ALL' | 'PENDING' | 'SYNCED' | 'FAILED'; 
-    label: string 
-  }) => (
-    <TouchableOpacity
-      style={[
-        styles.filterButton,
-        filterStatus === status && styles.filterButtonActive,
-      ]}
-      onPress={() => setFilterStatus(status)}
-    >
-      <Text
-        style={[
-          styles.filterButtonText,
-          filterStatus === status && styles.filterButtonTextActive,
-        ]}
-      >
-        {label}
-      </Text>
+      <View style={styles.paymentDetails}>
+        <View style={styles.taxInfo}>
+          <Text style={styles.taxType} numberOfLines={1}>
+            {item.tax_type_label || 'Type inconnu'}
+          </Text>
+          <Text style={styles.taxCategory} numberOfLines={1}>
+            {item.tax_categorie_label || 'Catégorie inconnue'}
+          </Text>
+        </View>
+        <View style={styles.amountContainer}>
+          <Text style={styles.amount}>{formatAmount(item.total_amount)}</Text>
+          <Text style={styles.time}>{formatTime(item.paid_at)}</Text>
+        </View>
+      </View>
+
+      <View style={styles.paymentFooter}>
+        <Text style={styles.receiptNumber}>N° {item.uuid.slice(0, 8).toUpperCase()}</Text>
+        <TouchableOpacity style={styles.printButton} onPress={() => handlePrint(item)}>
+          <Ionicons name="print" size={16} color="#fff" />
+          <Text style={styles.printButtonText}>Imprimer</Text>
+        </TouchableOpacity>
+      </View>
     </TouchableOpacity>
   );
 
+  // Rendu de l'en-tête de section
+  const renderSectionHeader = ({ section }: { section: PaymentSection }) => (
+    <View style={styles.sectionHeader}>
+      <View style={styles.sectionTitleContainer}>
+        <Ionicons name="calendar" size={18} color="#1976D2" />
+        <Text style={styles.sectionTitle}>{section.title}</Text>
+      </View>
+      <View style={styles.sectionStats}>
+        <Text style={styles.sectionCount}>{section.count} paiement(s)</Text>
+        <Text style={styles.sectionTotal}>{formatAmount(section.totalAmount)}</Text>
+      </View>
+    </View>
+  );
+
+  // Rendu de l'en-tête de liste avec statistiques
+  const renderListHeader = () => (
+    <View style={styles.listHeader}>
+      {/* Statistiques */}
+      <View style={styles.statsContainer}>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{stats.count}</Text>
+          <Text style={styles.statLabel}>Total</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: '#4CAF50' }]}>{stats.synced}</Text>
+          <Text style={styles.statLabel}>Synchronisés</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: '#FFA000' }]}>{stats.pending}</Text>
+          <Text style={styles.statLabel}>En attente</Text>
+        </View>
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: '#1976D2' }]}>{formatAmount(stats.total)}</Text>
+          <Text style={styles.statLabel}>Montant</Text>
+        </View>
+      </View>
+
+      {/* Filtres de période */}
+      <View style={styles.filterSection}>
+        <Text style={styles.filterLabel}>Période :</Text>
+        <View style={styles.filterButtons}>
+          {(['ALL', 'TODAY', 'WEEK', 'MONTH'] as PeriodFilter[]).map((period) => (
+            <TouchableOpacity
+              key={period}
+              style={[styles.filterButton, periodFilter === period && styles.filterButtonActive]}
+              onPress={() => setPeriodFilter(period)}
+            >
+              <Text
+                style={[
+                  styles.filterButtonText,
+                  periodFilter === period && styles.filterButtonTextActive,
+                ]}
+              >
+                {period === 'ALL'
+                  ? 'Tout'
+                  : period === 'TODAY'
+                    ? "Aujourd'hui"
+                    : period === 'WEEK'
+                      ? 'Semaine'
+                      : 'Mois'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Filtres de statut */}
+      <View style={styles.filterSection}>
+        <Text style={styles.filterLabel}>Statut :</Text>
+        <View style={styles.filterButtons}>
+          {(['ALL', 'PENDING', 'SYNCED', 'FAILED'] as StatusFilter[]).map((status) => (
+            <TouchableOpacity
+              key={status}
+              style={[
+                styles.filterButton,
+                statusFilter === status && styles.filterButtonActive,
+                status === 'SYNCED' && statusFilter === status && { backgroundColor: '#4CAF50' },
+                status === 'PENDING' && statusFilter === status && { backgroundColor: '#FFA000' },
+                status === 'FAILED' && statusFilter === status && { backgroundColor: '#F44336' },
+              ]}
+              onPress={() => setStatusFilter(status)}
+            >
+              <Text
+                style={[
+                  styles.filterButtonText,
+                  statusFilter === status && styles.filterButtonTextActive,
+                ]}
+              >
+                {status === 'ALL'
+                  ? 'Tout'
+                  : status === 'PENDING'
+                    ? 'En attente'
+                    : status === 'SYNCED'
+                      ? 'Synchronisés'
+                      : 'Échoués'}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+
+  // Rendu de la liste vide
+  const renderEmptyList = () => (
+    <View style={styles.emptyContainer}>
+      <Ionicons name="receipt-outline" size={80} color="#ccc" />
+      <Text style={styles.emptyText}>Aucun paiement trouvé</Text>
+      <Text style={styles.emptySubtext}>
+        {searchQuery || statusFilter !== 'ALL' || periodFilter !== 'ALL'
+          ? 'Essayez de modifier vos filtres'
+          : 'Les paiements effectués apparaîtront ici'}
+      </Text>
+    </View>
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#1976D2" />
+        <Text style={styles.loadingText}>Chargement...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      {/* Search */}
+      {/* Barre de recherche */}
       <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#666" />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Rechercher un paiement..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-      </View>
-
-      {/* Filters */}
-      <View style={styles.filtersContainer}>
-        <StatusFilterButton status="ALL" label="Tous" />
-        <StatusFilterButton status="PENDING" label="En attente" />
-        <StatusFilterButton status="SYNCED" label="Synchronisés" />
-        <StatusFilterButton status="FAILED" label="Échoués" />
-      </View>
-
-      {/* List */}
-      <FlatList
-        data={filteredPayments}
-        keyExtractor={(item) => item.local_uuid}
-        renderItem={renderPaymentItem}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={onRefresh}
-            tintColor={Colors.primary}
-            colors={[Colors.primary]}
+        <View style={styles.searchInputContainer}>
+          <Ionicons name="search" size={20} color="#666" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Rechercher par nom, téléphone, type..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholderTextColor="#999"
           />
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconContainer}>
-              <Ionicons name="receipt-outline" size={48} color={Colors.textMuted} />
-            </View>
-            <Text style={styles.emptyTitle}>Aucun paiement</Text>
-            <Text style={styles.emptyText}>Les paiements apparaîtront ici</Text>
-          </View>
-        }
-      />
-
-      {/* FAB */}
-      <Link href="/payment/new" asChild>
-        <TouchableOpacity style={styles.fab} activeOpacity={0.8}>
-          <LinearGradient
-            colors={[Colors.primary, Colors.primaryLight]}
-            style={styles.fabGradient}
-          >
-            <Ionicons name="add" size={28} color="#FFFFFF" />
-          </LinearGradient>
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+        <TouchableOpacity
+          style={[styles.syncButton, syncing && styles.syncButtonDisabled]}
+          onPress={handleSyncAll}
+          disabled={syncing}
+        >
+          {syncing ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="sync" size={20} color="#fff" />
+          )}
         </TouchableOpacity>
-      </Link>
+      </View>
+
+      {/* Liste des paiements groupés par jour */}
+      <SectionList
+        sections={filteredSections}
+        keyExtractor={(item) => item.uuid}
+        renderItem={renderPayment}
+        renderSectionHeader={renderSectionHeader}
+        ListHeaderComponent={renderListHeader}
+        ListEmptyComponent={renderEmptyList}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1976D2']} />}
+        contentContainerStyle={filteredSections.length === 0 ? styles.emptyListContent : undefined}
+        stickySectionHeadersEnabled={false}
+        showsVerticalScrollIndicator={false}
+      />
     </View>
   );
 }
@@ -248,165 +531,278 @@ export default function HistoryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.background,
+    backgroundColor: '#f5f5f5',
   },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+    color: '#666',
+  },
+
+  // Barre de recherche
   searchContainer: {
     flexDirection: 'row',
+    padding: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    gap: 10,
+  },
+  searchInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.backgroundCard,
-    margin: Spacing.md,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+  },
+  searchIcon: {
+    marginRight: 8,
   },
   searchInput: {
     flex: 1,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    fontSize: FontSizes.md,
-    color: Colors.textPrimary,
+    height: 44,
+    fontSize: 16,
+    color: '#333',
   },
-  filtersContainer: {
+  syncButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: '#1976D2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  syncButtonDisabled: {
+    backgroundColor: '#90CAF9',
+  },
+
+  // En-tête de liste
+  listHeader: {
+    backgroundColor: '#fff',
+    paddingBottom: 12,
+    marginBottom: 8,
+  },
+  statsContainer: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    gap: Spacing.sm,
+    justifyContent: 'space-around',
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+  },
+
+  // Filtres
+  filterSection: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+  },
+  filterLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 8,
+  },
+  filterButtons: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   filterButton: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.full,
-    backgroundColor: Colors.backgroundCard,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: '#e0e0e0',
   },
   filterButtonActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
+    backgroundColor: '#1976D2',
+    borderColor: '#1976D2',
   },
   filterButtonText: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    fontWeight: FontWeights.medium,
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
   },
   filterButtonTextActive: {
-    color: Colors.textPrimary,
+    color: '#fff',
   },
-  listContent: {
-    padding: Spacing.md,
-    paddingBottom: 150,
+
+  // En-tête de section
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#E3F2FD',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginTop: 8,
+    marginHorizontal: 12,
+    borderRadius: 10,
   },
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1976D2',
+  },
+  sectionStats: {
+    alignItems: 'flex-end',
+  },
+  sectionCount: {
+    fontSize: 12,
+    color: '#666',
+  },
+  sectionTotal: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1976D2',
+  },
+
+  // Carte de paiement
   paymentCard: {
-    backgroundColor: Colors.backgroundCard,
-    borderRadius: BorderRadius.xl,
-    padding: Spacing.lg,
-    marginBottom: Spacing.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: '#fff',
+    marginHorizontal: 12,
+    marginTop: 8,
+    borderRadius: 12,
+    padding: 14,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
   },
   paymentHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: Spacing.md,
+    alignItems: 'flex-start',
+    marginBottom: 10,
   },
   paymentInfo: {
     flex: 1,
   },
   payerName: {
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.semibold,
-    color: Colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
   },
-  paymentType: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    marginTop: Spacing.xs,
+  payerPhone: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 2,
   },
-  paymentAmount: {
+  paymentStatus: {
+    padding: 4,
+  },
+  paymentDetails: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  taxInfo: {
+    flex: 1,
+    marginRight: 10,
+  },
+  taxType: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  taxCategory: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
+  },
+  amountContainer: {
     alignItems: 'flex-end',
   },
-  amountText: {
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.bold,
-    color: Colors.textPrimary,
+  amount: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1976D2',
   },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.full,
-    marginTop: Spacing.xs,
-    gap: Spacing.xs,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
-    fontSize: FontSizes.xs,
-    fontWeight: FontWeights.semibold,
+  time: {
+    fontSize: 12,
+    color: '#999',
+    marginTop: 2,
   },
   paymentFooter: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    paddingTop: Spacing.md,
-    gap: Spacing.xs,
+    borderTopColor: '#f0f0f0',
   },
-  footerDivider: {
-    width: 1,
-    height: 12,
-    backgroundColor: Colors.border,
-    marginHorizontal: Spacing.sm,
+  receiptNumber: {
+    fontSize: 12,
+    color: '#999',
+    fontFamily: 'monospace',
   },
-  dateText: {
-    fontSize: FontSizes.sm,
-    color: Colors.textMuted,
+  printButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#4CAF50',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 6,
+    gap: 6,
   },
-  receiptNo: {
-    fontSize: FontSizes.sm,
-    color: Colors.textMuted,
+  printButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
   },
+
+  // Liste vide
   emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.xxl * 2,
-  },
-  emptyIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: Colors.backgroundCard,
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    paddingVertical: 60,
   },
-  emptyTitle: {
-    fontSize: FontSizes.xl,
-    fontWeight: FontWeights.semibold,
-    color: Colors.textPrimary,
-    marginBottom: Spacing.xs,
+  emptyListContent: {
+    flexGrow: 1,
   },
   emptyText: {
-    fontSize: FontSizes.md,
-    color: Colors.textMuted,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#666',
+    marginTop: 16,
   },
-  fab: {
-    position: 'absolute',
-    right: Spacing.lg,
-    bottom: 90,
-    borderRadius: 28,
-    ...Shadows.glow,
-  },
-  fabGradient: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
+  emptySubtext: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: 8,
+    textAlign: 'center',
+    paddingHorizontal: 40,
   },
 });

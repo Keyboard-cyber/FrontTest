@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "taxe-mobile-agent",
+    "name": "Smart Taxe",
     "slug": "taxe-mobile-agent",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.taxe.mobile.agent"
+      "bundleIdentifier": "com.smart.taxe"
     },
     "android": {
       "adaptiveIcon": {
@@ -23,14 +23,33 @@
         "backgroundColor": "#1a73e8"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.taxe.mobile.agent"
+      "package": "com.smart.taxe",
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.USB_PERMISSION",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#7B61FF",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

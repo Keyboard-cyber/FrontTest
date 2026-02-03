@@ -9,12 +9,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../src/contexts';
-import { Colors, Spacing, BorderRadius, FontSizes, FontWeights, Shadows } from '../src/theme';
+import { Colors, Shadows } from '../src/theme';
+import { scale, rs, rf, rr, wp, hp } from '../src/utils/responsive';
 
 export default function LoginScreen() {
   const { login, isLoading } = useAuth();
@@ -51,14 +53,11 @@ export default function LoginScreen() {
           {/* Logo/Header */}
           <View style={styles.header}>
             <View style={styles.logoContainer}>
-              <LinearGradient
-                colors={[Colors.primary, Colors.accent]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.logoGradient}
-              >
-                <Ionicons name="wallet" size={40} color={Colors.textPrimary} />
-              </LinearGradient>
+              <Image 
+                source={require('../assets/logo.png')} 
+                style={styles.logo}
+                resizeMode="contain"
+              />
             </View>
             <Text style={styles.title}>Taxe Mobile</Text>
             <Text style={styles.subtitle}>Collecte Simplifiée</Text>
@@ -145,21 +144,21 @@ const styles = StyleSheet.create({
   },
   backgroundCircle1: {
     position: 'absolute',
-    top: -150,
-    right: -100,
-    width: 300,
-    height: 300,
-    borderRadius: 150,
+    top: hp(-18),
+    right: wp(-25),
+    width: scale(300),
+    height: scale(300),
+    borderRadius: scale(150),
     backgroundColor: Colors.primary,
     opacity: 0.1,
   },
   backgroundCircle2: {
     position: 'absolute',
-    bottom: -100,
-    left: -100,
-    width: 250,
-    height: 250,
-    borderRadius: 125,
+    bottom: hp(-12),
+    left: wp(-25),
+    width: scale(250),
+    height: scale(250),
+    borderRadius: scale(125),
     backgroundColor: Colors.accent,
     opacity: 0.08,
   },
@@ -169,79 +168,76 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     justifyContent: 'center',
-    padding: Spacing.lg,
+    padding: rs.lg,
   },
   header: {
     alignItems: 'center',
-    marginBottom: Spacing.xxl,
+    marginBottom: rs.xxl,
   },
   logoContainer: {
-    marginBottom: Spacing.lg,
+    marginBottom: rs.lg,
   },
-  logoGradient: {
-    width: 80,
-    height: 80,
-    borderRadius: BorderRadius.xl,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...Shadows.glow,
+  logo: {
+    width: scale(120),
+    height: scale(120),
+    borderRadius: rr.xl,
   },
   title: {
-    fontSize: FontSizes.xxxl,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.xxxl,
+    fontWeight: '700',
     color: Colors.textPrimary,
     letterSpacing: 1,
   },
   subtitle: {
-    fontSize: FontSizes.lg,
+    fontSize: rf.lg,
     color: Colors.textSecondary,
-    marginTop: Spacing.xs,
+    marginTop: rs.xs,
   },
   formCard: {
     backgroundColor: Colors.backgroundCard,
-    borderRadius: BorderRadius.xxl,
-    padding: Spacing.xl,
+    borderRadius: rr.xxl,
+    padding: rs.xl,
     borderWidth: 1,
     borderColor: Colors.border,
     ...Shadows.lg,
   },
   welcomeText: {
-    fontSize: FontSizes.xxl,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.xxl,
+    fontWeight: '700',
     color: Colors.textPrimary,
-    marginBottom: Spacing.xs,
+    marginBottom: rs.xs,
   },
   instructionText: {
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
     color: Colors.textSecondary,
-    marginBottom: Spacing.xl,
+    marginBottom: rs.xl,
   },
   inputContainer: {
-    marginBottom: Spacing.lg,
+    marginBottom: rs.lg,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.backgroundCardLight,
-    borderRadius: BorderRadius.lg,
+    borderRadius: rr.lg,
     borderWidth: 1,
     borderColor: Colors.border,
   },
   inputIcon: {
-    paddingLeft: Spacing.md,
+    paddingLeft: rs.md,
   },
   input: {
     flex: 1,
-    padding: Spacing.md,
-    fontSize: FontSizes.lg,
+    padding: rs.md,
+    fontSize: rf.lg,
     color: Colors.textPrimary,
   },
   eyeIcon: {
-    padding: Spacing.md,
+    padding: rs.md,
   },
   button: {
-    marginTop: Spacing.md,
-    borderRadius: BorderRadius.lg,
+    marginTop: rs.md,
+    borderRadius: rr.lg,
     overflow: 'hidden',
     ...Shadows.md,
   },
@@ -252,19 +248,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md + 2,
-    paddingHorizontal: Spacing.xl,
-    gap: Spacing.sm,
+    paddingVertical: rs.md + 2,
+    paddingHorizontal: rs.xl,
+    gap: rs.sm,
   },
   buttonText: {
     color: Colors.textPrimary,
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.semibold,
+    fontSize: rf.lg,
+    fontWeight: '600',
   },
   footer: {
     textAlign: 'center',
     color: Colors.textMuted,
-    marginTop: Spacing.xxl,
-    fontSize: FontSizes.sm,
+    marginTop: rs.xxl,
+    fontSize: rf.sm,
   },
 });

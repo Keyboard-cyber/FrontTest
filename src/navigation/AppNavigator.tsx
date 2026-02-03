@@ -105,7 +105,7 @@ export const AppNavigator: React.FC = () => {
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
-        <Text style={styles.loadingText}>Taxe Mobile Agent</Text>
+        <Text style={styles.loadingText}>Smart Taxe</Text>
         <Text style={styles.loadingSubtext}>Chargement...</Text>
       </View>
     );

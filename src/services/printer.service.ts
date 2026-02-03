@@ -1,358 +1,294 @@
-import { Platform, NativeModules } from 'react-native';
-import * as Print from 'expo-print';
-import * as Sharing from 'expo-sharing';
-
 /**
- * Service d'impression pour terminaux Android handheld avec imprimante thermique intégrée
- * 
- * Supporte:
- * - Impression via expo-print (système Android)
- * - Impression directe via SDK natif (Sunmi, iMin, etc.)
+ * Service d'impression de reçus
+ * Génère des PDF avec QR code pour l'impression thermique
  */
 
-export interface PrinterStatus {
-  isConnected: boolean;
-  isPrinting: boolean;
-  hasError: boolean;
-  errorMessage?: string;
-  paperStatus?: 'OK' | 'LOW' | 'EMPTY';
-}
+import { Platform, PermissionsAndroid } from 'react-native';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { qrCodeService } from './qrcode.service';
 
-export interface PrintOptions {
-  copies?: number;
-  cutPaper?: boolean;
-  openDrawer?: boolean;
+
+interface SignatureInfo {
+  uuid: string;
+  amount: string;
+  date: string;
+  agentId: string;
 }
 
 class PrinterService {
-  private isInitialized = false;
-  private printerType: 'system' | 'sunmi' | 'imin' | 'unknown' = 'unknown';
+  private initialized = false;
+  private isPrinting = false;
 
   /**
-   * Initialiser et détecter le type d'imprimante
+   * Initialise le service (demande les permissions si nécessaire)
    */
   async initialize(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      console.log('⚠️ Impression disponible uniquement sur Android');
-      this.printerType = 'system';
-      this.isInitialized = true;
-      return true;
+    if (this.initialized) return true;
+
+    if (Platform.OS === 'android') {
+      try {
+        await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        ] as any);
+      } catch (e) {
+        console.warn('Permissions Bluetooth non accordées');
+      }
     }
 
-    try {
-      // Détecter le type de terminal/imprimante
-      await this.detectPrinterType();
-      
-      this.isInitialized = true;
-      console.log(`✅ Service d'impression initialisé (type: ${this.printerType})`);
-      return true;
-    } catch (error) {
-      console.error('❌ Erreur initialisation imprimante:', error);
-      this.printerType = 'system';
-      this.isInitialized = true;
-      return true; // On continue avec l'impression système
-    }
+    this.initialized = true;
+    return true;
   }
 
   /**
-   * Détecter le type d'imprimante du terminal
+   * Parse les données de signature QR
    */
-  private async detectPrinterType(): Promise<void> {
-    try {
-      // Vérifier si c'est un terminal Sunmi
-      if (NativeModules.SunmiInnerPrinter) {
-        this.printerType = 'sunmi';
-        console.log('📱 Terminal Sunmi détecté');
-        return;
-      }
-
-      // Vérifier si c'est un terminal iMin
-      if (NativeModules.IminPrinter) {
-        this.printerType = 'imin';
-        console.log('📱 Terminal iMin détecté');
-        return;
-      }
-
-      // Utiliser l'impression système par défaut
-      this.printerType = 'system';
-      console.log('📱 Utilisation de l\'impression système Android');
-    } catch (error) {
-      this.printerType = 'system';
+  private parseSignature(qrData: string): SignatureInfo | null {
+    if (!qrData || !qrData.includes('|')) {
+      return null;
     }
-  }
 
-  /**
-   * Vérifier le statut de l'imprimante
-   */
-  async getStatus(): Promise<PrinterStatus> {
-    if (!this.isInitialized) {
-      await this.initialize();
+    const parts = qrData.split('|');
+    if (parts.length < 4) {
+      return null;
     }
 
     return {
-      isConnected: true,
-      isPrinting: false,
-      hasError: false,
-      paperStatus: 'OK',
+      uuid: parts[0],
+      amount: parts[1],
+      date: parts[2],
+      agentId: parts[3],
     };
   }
 
   /**
-   * Générer le HTML pour impression thermique 58mm
-   * @param text Texte formaté (31 caractères/ligne)
+   * Formate la date pour l'affichage
    */
-  private generateThermalHTML(text: string): string {
-    const lines = text.split('\n');
-    
-    // CSS optimisé pour impression thermique 58mm
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=58mm, initial-scale=1.0">
-        <style>
-          @page {
-            size: 58mm auto;
-            margin: 0;
-          }
-          * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-          }
-          body {
-            font-family: 'Courier New', Courier, monospace;
-            font-size: 12px;
-            line-height: 1.2;
-            width: 58mm;
-            padding: 2mm;
-            background: white;
-            color: black;
-          }
-          .line {
-            white-space: pre;
-            font-family: 'Courier New', Courier, monospace;
-          }
-          .center {
-            text-align: center;
-          }
-          .bold {
-            font-weight: bold;
-          }
-          .separator {
-            border-bottom: 1px dashed #000;
-            margin: 2px 0;
-          }
-          .qr-container {
-            text-align: center;
-            margin: 5mm 0;
-          }
-          .qr-placeholder {
-            display: inline-block;
-            width: 30mm;
-            height: 30mm;
-            border: 1px solid #000;
-            text-align: center;
-            line-height: 30mm;
-            font-size: 8px;
-          }
-        </style>
-      </head>
-      <body>
-        ${lines.map(line => {
-          // Détecter les lignes de séparation
-          if (line.includes('═') || line.includes('─') || line.includes('=')) {
-            return '<div class="separator"></div>';
-          }
-          // Lignes centrées (titre, montants)
-          if (line.trim().startsWith('***') || line.includes('REPUBLIQUE') || line.includes('TOTAL') || line.includes('FC')) {
-            return `<div class="line center bold">${this.escapeHtml(line)}</div>`;
-          }
-          return `<div class="line">${this.escapeHtml(line)}</div>`;
-        }).join('\n')}
-      </body>
-      </html>
-    `;
-    
-    return html;
+  private formatDate(isoDate: string): string {
+    try {
+      const date = new Date(isoDate);
+      return date.toLocaleDateString('fr-FR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return isoDate.substring(0, 10);
+    }
   }
 
   /**
-   * Échapper les caractères HTML
+   * Génère le HTML du reçu avec QR code
    */
-  private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  }
+  private async generateHTML(receiptText: string, qrData?: string): Promise<string> {
+    const qrSize = 150;
+    let qrHtml = '';
 
-  /**
-   * Imprimer du texte via le système Android
-   * @param text Texte formaté pour impression 58mm
-   */
-  async printText(text: string, options?: PrintOptions): Promise<boolean> {
-    if (!this.isInitialized) {
-      await this.initialize();
+    // Générer le QR code si données présentes
+    if (qrData && qrData.trim()) {
+      console.log('=== Génération QR Code ===');
+      console.log('Données:', qrData);
+
+      // Utiliser le service QR professionnel
+      qrHtml = await qrCodeService.toHtml(qrData, qrSize);
+
+      if (qrHtml) {
+        console.log('QR Code HTML généré avec succès');
+      } else {
+        console.warn('Échec génération QR Code');
+      }
     }
 
+    return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 10pt;
+      line-height: 1.4;
+      padding: 4mm;
+      width: 58mm;
+      background: white;
+    }
+    
+    .receipt-content {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin-bottom: 10px;
+    }
+    
+    .qr-section {
+      text-align: center;
+      margin: 15px 0;
+      padding: 10px;
+      border: 1px dashed #333;
+      background: #fafafa;
+    }
+    
+    .qr-code {
+      display: flex;
+      justify-content: center;
+      margin: 10px 0;
+    }
+    
+    .qr-code img {
+      width: ${qrSize}px;
+      height: ${qrSize}px;
+    }
+    
+    .footer {
+      text-align: center;
+      margin-top: 15px;
+      padding-top: 10px;
+      border-top: 1px solid #333;
+      font-size: 9pt;
+    }
+    
+    .footer-thanks {
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt-content">${receiptText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+  
+  ${qrData ? `
+  <div class="qr-section">
+    ${qrHtml ? `<div class="qr-code">${qrHtml}</div>` : '<p style="color:red;">QR non disponible</p>'}
+  </div>
+  ` : ''}
+  
+  <div class="footer">
+    <div class="footer-thanks">Merci</div>
+  </div>
+</body>
+</html>`;
+  }
+
+  /**
+   * Imprime le reçu
+   */
+  async print(receiptText: string, qrData?: string): Promise<boolean> {
+    // Éviter les appels multiples simultanés
+    if (this.isPrinting) {
+      console.log('Impression déjà en cours, ignoré');
+      return false;
+    }
+
+    this.isPrinting = true;
+    await this.initialize();
+
+    console.log('=== IMPRESSION ===');
+    console.log('QR Data:', qrData);
+
     try {
-      // Générer le HTML pour impression
-      const html = this.generateThermalHTML(text);
+      const html = await this.generateHTML(receiptText, qrData);
 
-      // Imprimer via expo-print (utilise le système d'impression Android)
-      await Print.printAsync({
-        html,
-        width: 58 * 2.83465, // 58mm en points (1mm = 2.83465 points)
-        height: 297 * 2.83465, // Hauteur auto
-      });
+      if (!html) {
+        console.error('HTML vide');
+        this.isPrinting = false;
+        return false;
+      }
 
-      console.log('✅ Impression envoyée au système');
+      await Print.printAsync({ html });
+      console.log('Impression terminée');
+      this.isPrinting = false;
       return true;
-    } catch (error) {
-      console.error('❌ Erreur impression:', error);
+    } catch (error: any) {
+      this.isPrinting = false;
+      const msg = error?.message || String(error);
+
+      // Gestion des annulations (normal)
+      if (
+        msg.includes('cancel') ||
+        msg.includes('did not complete') ||
+        msg.includes('User canceled') ||
+        msg.includes('already in progress')
+      ) {
+        console.log('Impression annulée par utilisateur');
+        return false;
+      }
+
+      console.error('Erreur impression:', msg);
       return false;
     }
   }
 
   /**
-   * Imprimer directement sans dialogue (pour terminaux avec imprimante intégrée)
-   * @param text Texte formaté
+   * Génère un PDF du reçu
    */
-  async printDirect(text: string): Promise<boolean> {
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
+  async generatePDF(receiptText: string, qrData?: string): Promise<string | null> {
+    console.log('=== GÉNÉRATION PDF ===');
+    console.log('QR Data:', qrData);
 
     try {
-      const html = this.generateThermalHTML(text);
+      const html = await this.generateHTML(receiptText, qrData);
 
-      // selectPrinter permet de choisir/mémoriser l'imprimante
-      // Sur les terminaux avec imprimante intégrée, elle sera souvent la seule option
-      const printer = await Print.selectPrinterAsync();
-      
-      if (printer) {
-        await Print.printAsync({
-          html,
-          printerUrl: printer.url,
-        });
-        return true;
+      if (!html) {
+        throw new Error('HTML vide');
       }
-      
-      // Si pas de sélection, utiliser l'impression standard
-      return await this.printText(text);
-    } catch (error) {
-      console.error('❌ Erreur impression directe:', error);
-      // Fallback sur l'impression standard
-      return await this.printText(text);
-    }
-  }
 
-  /**
-   * Générer un PDF du reçu (pour partage ou sauvegarde)
-   */
-  async generatePDF(text: string): Promise<string | null> {
-    try {
-      const html = this.generateThermalHTML(text);
-      
-      const { uri } = await Print.printToFileAsync({
-        html,
-        width: 58 * 2.83465,
-        height: 200 * 2.83465,
-      });
-      
-      console.log('📄 PDF généré:', uri);
-      return uri;
+      const result = await Print.printToFileAsync({ html });
+
+      if (!result?.uri) {
+        throw new Error('Génération PDF échouée');
+      }
+
+      console.log('PDF généré:', result.uri);
+      return result.uri;
     } catch (error) {
-      console.error('❌ Erreur génération PDF:', error);
+      console.error('Erreur génération PDF:', error);
       return null;
     }
   }
 
   /**
-   * Partager le reçu en PDF
+   * Partage le reçu en PDF
    */
-  async shareReceipt(text: string): Promise<boolean> {
+  async shareReceipt(receiptText: string, qrData?: string): Promise<boolean> {
     try {
-      const pdfUri = await this.generatePDF(text);
-      
-      if (pdfUri && await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(pdfUri, {
-          mimeType: 'application/pdf',
-          dialogTitle: 'Partager le reçu',
-          UTI: 'com.adobe.pdf',
-        });
-        return true;
+      const uri = await this.generatePDF(receiptText, qrData);
+
+      if (!uri) {
+        console.error('Impossible de générer le PDF');
+        return false;
       }
-      
+
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (!isAvailable) {
+        console.warn('Partage non disponible');
+        return false;
+      }
+
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Partager le reçu',
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Erreur partage:', error);
       return false;
-    } catch (error) {
-      console.error('❌ Erreur partage:', error);
-      return false;
     }
   }
 
   /**
-   * Couper le papier (si supporté par le terminal)
+   * Alias pour print
    */
-  async cutPaper(): Promise<void> {
-    try {
-      if (this.printerType === 'sunmi' && NativeModules.SunmiInnerPrinter) {
-        await NativeModules.SunmiInnerPrinter.cutPaper();
-      }
-      console.log('✂️ Coupe papier (si supporté)');
-    } catch (error) {
-      // Silencieux si non supporté
-    }
-  }
-
-  /**
-   * Ouvrir le tiroir-caisse (si disponible)
-   */
-  async openCashDrawer(): Promise<void> {
-    try {
-      if (this.printerType === 'sunmi' && NativeModules.SunmiInnerPrinter) {
-        await NativeModules.SunmiInnerPrinter.openCashDrawer();
-      }
-      console.log('💰 Tiroir-caisse (si disponible)');
-    } catch (error) {
-      // Silencieux si non disponible
-    }
-  }
-
-  /**
-   * Imprimer un reçu complet
-   */
-  async printReceipt(text: string, options?: PrintOptions): Promise<boolean> {
-    const success = await this.printText(text, options);
-    
-    if (success && options?.cutPaper) {
-      await this.cutPaper();
-    }
-    
-    if (success && options?.openDrawer) {
-      await this.openCashDrawer();
-    }
-    
-    return success;
-  }
-
-  /**
-   * Vérifier si l'impression est disponible
-   */
-  async isAvailable(): Promise<boolean> {
-    if (Platform.OS === 'ios') {
-      return true; // iOS supporte toujours AirPrint
-    }
-    
-    if (Platform.OS === 'android') {
-      return true; // Android a toujours le service d'impression
-    }
-    
-    return false;
+  async printReceipt(receiptText: string, qrData?: string): Promise<boolean> {
+    return this.print(receiptText, qrData);
   }
 }
 

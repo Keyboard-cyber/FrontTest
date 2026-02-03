@@ -18,7 +18,8 @@ import { useAuth, useSync } from '../../src/contexts';
 import { getPaymentByUuid, getTaxCategorieById, getTaxTypeById, getLocalTerminal } from '../../src/database';
 import { receiptService } from '../../src/services/receipt.service';
 import { LocalPaymentQueue } from '../../src/types';
-import { Colors, Spacing, BorderRadius, FontSizes, FontWeights, Shadows } from '../../src/theme';
+import { Colors, Shadows } from '../../src/theme';
+import { scale, rs, rf, rr, hp } from '../../src/utils/responsive';
 
 export default function ReceiptScreen() {
   const router = useRouter();
@@ -146,23 +147,25 @@ export default function ReceiptScreen() {
         typeLabel,
       });
       
+      // Générer les données QR
+      const qrData = receiptService.generateQrData(paymentToPrint);
+      
       // 3. Import du service d'impression
       const { printerService } = await import('../../src/services/printer.service');
       
       // 4. Initialiser l'imprimante
       await printerService.initialize();
       
-      // 5. Imprimer le reçu (ouvre le dialogue d'impression Android)
-      const success = await printerService.printReceipt(receiptText, {
-        cutPaper: true,
-      });
+      // 5. Imprimer le reçu avec QR code
+      const success = await printerService.printReceipt(receiptText, qrData);
       
       if (success) {
         Alert.alert('✅ Succès', 'Reçu envoyé à l\'imprimante');
       }
+      // Si pas de succès, pas d'alerte d'erreur (annulation ou Expo Go)
     } catch (error) {
-      console.error('Erreur impression:', error);
-      Alert.alert('❌ Erreur', 'Erreur lors de l\'impression: ' + String(error));
+      console.log('Erreur impression:', error);
+      // Ne pas afficher d'alerte pour les erreurs d'impression sur Expo Go
     } finally {
       setIsPrinting(false);
     }
@@ -186,9 +189,12 @@ export default function ReceiptScreen() {
       typeLabel,
     });
     
+    // Générer les données QR
+    const qrData = receiptService.generateQrData(paymentToShare);
+    
     try {
       const { printerService } = await import('../../src/services/printer.service');
-      const success = await printerService.shareReceipt(receiptText);
+      const success = await printerService.shareReceipt(receiptText, qrData);
       
       if (!success) {
         // Fallback sur le partage texte
@@ -374,7 +380,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
   },
   loadingText: {
-    fontSize: FontSizes.md,
+    fontSize: rf.md,
     color: Colors.textSecondary,
   },
   errorContainer: {
@@ -382,29 +388,29 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: Colors.background,
-    padding: Spacing.xl,
+    padding: rs.xl,
   },
   errorText: {
-    fontSize: FontSizes.lg,
+    fontSize: rf.lg,
     color: Colors.textPrimary,
-    marginTop: Spacing.md,
-    marginBottom: Spacing.xl,
+    marginTop: rs.md,
+    marginBottom: rs.xl,
   },
   backButton: {
-    paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.md,
+    paddingHorizontal: rs.xl,
+    paddingVertical: rs.md,
     backgroundColor: Colors.primary,
-    borderRadius: BorderRadius.md,
+    borderRadius: rr.md,
   },
   backButtonText: {
     color: '#FFFFFF',
-    fontSize: FontSizes.md,
-    fontWeight: FontWeights.semibold,
+    fontSize: rf.md,
+    fontWeight: '600',
   },
   header: {
-    paddingTop: 50,
-    paddingBottom: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
+    paddingTop: hp(6),
+    paddingBottom: rs.lg,
+    paddingHorizontal: rs.lg,
   },
   headerContent: {
     flexDirection: 'row',
@@ -412,9 +418,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   closeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: scale(40),
+    height: scale(40),
+    borderRadius: scale(20),
     backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
@@ -422,62 +428,61 @@ const styles = StyleSheet.create({
   headerTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
+    gap: rs.sm,
   },
   headerTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.lg,
+    fontWeight: '700',
     color: '#FFFFFF',
   },
   headerPlaceholder: {
-    width: 40,
+    width: scale(40),
   },
   successBadge: {
     alignItems: 'center',
-    paddingVertical: Spacing.lg,
+    paddingVertical: rs.lg,
     backgroundColor: Colors.backgroundCard,
-    marginHorizontal: Spacing.lg,
-    marginTop: -Spacing.md,
-    borderRadius: BorderRadius.lg,
+    marginHorizontal: rs.lg,
+    marginTop: -rs.md,
+    borderRadius: rr.lg,
     ...Shadows.sm,
   },
   successIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: scale(64),
+    height: scale(64),
+    borderRadius: scale(32),
     backgroundColor: `${Colors.success}15`,
     justifyContent: 'center',
     alignItems: 'center',
   },
   successText: {
-    fontSize: FontSizes.lg,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.lg,
+    fontWeight: '700',
     color: Colors.textPrimary,
-    marginTop: Spacing.sm,
+    marginTop: rs.sm,
   },
   statusText: {
-    fontSize: FontSizes.sm,
+    fontSize: rf.sm,
     color: Colors.textSecondary,
-    marginTop: Spacing.xs,
+    marginTop: rs.xs,
   },
   receiptContainer: {
     flex: 1,
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.md,
+    marginHorizontal: rs.lg,
+    marginTop: rs.md,
   },
   receiptPaper: {
     backgroundColor: '#FFFFFF',
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
+    borderRadius: rr.md,
+    padding: rs.md,
     ...Shadows.sm,
-    // Simule le papier thermique
     borderWidth: 1,
     borderColor: Colors.border,
   },
   receiptLine: {
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-    fontSize: 11,
-    lineHeight: 14,
+    fontSize: scale(11),
+    lineHeight: scale(14),
     color: '#000000',
   },
   receiptCenter: {
@@ -485,17 +490,17 @@ const styles = StyleSheet.create({
   },
   qrCodeContainer: {
     alignItems: 'center',
-    paddingVertical: Spacing.md,
+    paddingVertical: rs.md,
     backgroundColor: '#FFFFFF',
   },
   actionsContainer: {
-    padding: Spacing.lg,
+    padding: rs.lg,
     backgroundColor: Colors.backgroundCard,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
   printButton: {
-    borderRadius: BorderRadius.md,
+    borderRadius: rr.md,
     overflow: 'hidden',
     ...Shadows.sm,
   },
@@ -506,32 +511,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    gap: Spacing.sm,
+    paddingVertical: rs.md,
+    gap: rs.sm,
   },
   printButtonText: {
     color: '#FFFFFF',
-    fontSize: FontSizes.md,
-    fontWeight: FontWeights.bold,
+    fontSize: rf.md,
+    fontWeight: '700',
   },
   secondaryActions: {
     flexDirection: 'row',
-    marginTop: Spacing.md,
-    gap: Spacing.md,
+    marginTop: rs.md,
+    gap: rs.md,
   },
   secondaryButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: Spacing.md,
+    paddingVertical: rs.md,
     backgroundColor: `${Colors.primary}10`,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.xs,
+    borderRadius: rr.md,
+    gap: rs.xs,
   },
   secondaryButtonText: {
     color: Colors.primary,
-    fontSize: FontSizes.sm,
-    fontWeight: FontWeights.semibold,
+    fontSize: rf.sm,
+    fontWeight: '600',
   },
 });

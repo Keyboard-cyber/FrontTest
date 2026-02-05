@@ -33,7 +33,12 @@ export default function LoginScreen() {
     const result = await login({ user_uid: userUid.trim(), password });
 
     if (result.success) {
-      router.replace('/(tabs)/home');
+      // Rediriger selon le rôle
+      if (result.role === 'controleur') {
+        router.replace('/(controller)/scan' as any);
+      } else {
+        router.replace('/(tabs)/home');
+      }
     } else {
       Alert.alert('Erreur de connexion', result.error || 'Une erreur est survenue');
     }

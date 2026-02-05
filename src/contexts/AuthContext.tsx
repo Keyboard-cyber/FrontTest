@@ -10,15 +10,21 @@ import {
   saveTaxCategories,
   saveTaxTypes,
   saveLocalTerminal,
+  saveOfflineCredentials,
+  verifyOfflineCredentials,
+  getOfflineCredentials,
+  getLocalTerminal,
 } from '../database';
 import { apiService, syncService } from '../services';
+import * as Network from 'expo-network';
 
 interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   profile: LocalProfile | null;
   user: User | null;
-  login: (credentials: LoginCredentials) => Promise<{ success: boolean; error?: string }>;
+  userRole: 'agent' | 'controleur' | null;
+  login: (credentials: LoginCredentials) => Promise<{ success: boolean; error?: string; role?: string }>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -42,6 +48,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [userRole, setUserRole] = useState<'agent' | 'controleur' | null>(null);
 
   // Fonction pour gérer la déconnexion silencieuse (token expiré)
   const handleTokenExpired = async () => {
@@ -50,6 +57,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     await clearAuthData();
     setProfile(null);
     setUser(null);
+    setUserRole(null);
     setIsAuthenticated(false);
   };
 
@@ -76,19 +84,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.log('✅ Token restauré depuis le profil local');
           }
           
-          // Essayer de récupérer les infos utilisateur à jour
+          // Essayer de récupérer les infos utilisateur à jour et le rôle
           try {
             const userData = await apiService.getMe();
             setUser(userData);
+            // Détecter le rôle depuis les données utilisateur
+            const detectedRole = (userData.role || '').toLowerCase().trim();
+            if (detectedRole === 'controleur' || detectedRole === 'controller') {
+              setUserRole('controleur');
+            } else {
+              setUserRole('agent');
+            }
           } catch (error) {
-            // Mode hors ligne - utiliser les données locales
+            // Mode hors ligne - récupérer le rôle depuis les credentials stockés
+            const storedCreds = await getOfflineCredentials(localProfile.user_uid);
+            const storedRole = storedCreds?.role || 'agent';
+            setUserRole(storedRole);
+            
             setUser({
               id: localProfile.user_id,
               uid: localProfile.user_uid,
               fullname: localProfile.fullname,
               email: '',
               phone: '',
-              role: 'agent',
+              role: storedRole,
               service_id: localProfile.service_id,
               zone: localProfile.zone,
               is_active: true,
@@ -105,12 +124,100 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     init();
   }, []);
 
-  const login = async (credentials: LoginCredentials): Promise<{ success: boolean; error?: string }> => {
+  // Fonction de login offline (après déconnexion, sans internet)
+  const loginOffline = async (credentials: LoginCredentials): Promise<{ success: boolean; error?: string; role?: string }> => {
+    try {
+      console.log('🔐 Vérification des credentials offline...');
+      
+      // Vérifier les credentials stockés (user_uid peut être un email ou identifiant)
+      const offlineCreds = await verifyOfflineCredentials(credentials.user_uid, credentials.password);
+      
+      if (!offlineCreds) {
+        console.log('❌ Credentials offline non trouvés ou invalides');
+        return { 
+          success: false, 
+          error: 'Identifiants incorrects ou aucune session précédente. Connectez-vous en ligne d\'abord.' 
+        };
+      }
+      
+      console.log('✅ Credentials offline validés pour:', offlineCreds.fullname);
+      
+      // Récupérer le rôle stocké
+      const storedRole: 'agent' | 'controleur' = offlineCreds.role || 'agent';
+      console.log('📋 Rôle stocké:', storedRole);
+      
+      // Recréer le profil local sans token (mode offline)
+      const localProfile: LocalProfile = {
+        user_id: offlineCreds.user_id,
+        user_uid: offlineCreds.user_uid || '',
+        fullname: offlineCreds.fullname,
+        service_id: offlineCreds.service_id || 0,
+        service_ids: offlineCreds.service_ids || '[]',
+        zone: offlineCreds.zone || null,
+        token: '', // Pas de token en mode offline
+        saved_at: new Date().toISOString(),
+      };
+      
+      await saveLocalProfile(localProfile);
+      console.log('💾 Profil local restauré');
+      
+      // Créer l'objet user
+      const userData: User = {
+        id: offlineCreds.user_id,
+        uid: offlineCreds.user_uid || '',
+        fullname: offlineCreds.fullname,
+        email: credentials.user_uid, // user_uid est souvent l'email
+        phone: '',
+        role: storedRole,
+        service_id: offlineCreds.service_id || 0,
+        zone: offlineCreds.zone || null,
+        is_active: true,
+      };
+      
+      setProfile(localProfile);
+      setUser(userData);
+      setUserRole(storedRole);
+      setIsAuthenticated(true);
+      
+      console.log('📴 Connexion offline réussie ! Rôle:', storedRole);
+      return { success: true, role: storedRole };
+      
+    } catch (error: any) {
+      console.error('Erreur login offline:', error);
+      return { success: false, error: 'Erreur lors de la connexion hors ligne' };
+    }
+  };
+
+  const login = async (credentials: LoginCredentials): Promise<{ success: boolean; error?: string; role?: string }> => {
     try {
       setIsLoading(true);
       
-      // 1. Authentification
-      const response = await apiService.login(credentials);
+      // Vérifier la connexion réseau
+      const netState = await Network.getNetworkStateAsync();
+      const isOnline = netState.isConnected && netState.isInternetReachable;
+      
+      // Si pas de connexion, essayer le login offline
+      if (!isOnline) {
+        console.log('📴 Mode hors ligne - Tentative de connexion offline');
+        const result = await loginOffline(credentials);
+        setIsLoading(false);
+        return result;
+      }
+      
+      // 1. Authentification en ligne
+      let response;
+      try {
+        response = await apiService.login(credentials);
+      } catch (error: any) {
+        // Si erreur réseau, essayer offline
+        if (error.message?.includes('Network') || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT' || error.message?.includes('timeout')) {
+          console.log('📴 Erreur réseau - Tentative de connexion offline');
+          const result = await loginOffline(credentials);
+          setIsLoading(false);
+          return result;
+        }
+        throw error;
+      }
       
       // Debug: voir la structure de la réponse
       console.log('Réponse login complète:', JSON.stringify(response, null, 2));
@@ -149,12 +256,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Debug: afficher le rôle exact
       console.log('Rôle utilisateur:', userData.role, '| Type:', typeof userData.role);
       
-      // Vérifier que c'est bien un agent (accepter 'agent', 'Agent', ou absence de rôle)
-      const userRole = (userData.role || '').toLowerCase().trim();
-      if (userRole && userRole !== 'agent') {
-        console.error('Rôle non autorisé:', userRole);
+      // Détecter le rôle de l'utilisateur
+      const detectedRole = (userData.role || '').toLowerCase().trim();
+      let finalRole: 'agent' | 'controleur' = 'agent';
+      
+      // Accepter les rôles : agent, controleur, controller
+      if (detectedRole === 'controleur' || detectedRole === 'controller') {
+        finalRole = 'controleur';
+        console.log('👮 Utilisateur détecté comme contrôleur');
+      } else if (detectedRole === 'agent' || detectedRole === '') {
+        finalRole = 'agent';
+        console.log('📋 Utilisateur détecté comme agent');
+      } else {
+        // Rôle non autorisé (admin, superadmin, etc.)
+        console.error('Rôle non autorisé:', detectedRole);
         apiService.clearToken();
-        return { success: false, error: `Seuls les agents peuvent utiliser cette application (votre rôle: ${userData.role})` };
+        return { success: false, error: `Ce rôle n'est pas autorisé pour l'application mobile (votre rôle: ${userData.role})` };
       }
       
       // 4. Récupérer toutes les données initiales de l'agent
@@ -260,16 +377,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log(`${localTypes.length} type(s) de taxes sauvegardé(s)`);
       }
 
+      // 8. Sauvegarder les credentials pour la reconnexion offline
+      console.log('💾 Sauvegarde des credentials pour mode offline...');
+      await saveOfflineCredentials(credentials.user_uid, credentials.password, localProfile, finalRole);
+      console.log('✅ Credentials offline sauvegardés avec rôle:', finalRole);
+
       // Effacer le token temporaire (sera lu depuis le profil local)
       apiService.clearToken();
       
       setProfile(localProfile);
       setUser(userData);
+      setUserRole(finalRole);
       setIsAuthenticated(true);
 
-      console.log('Connexion et synchronisation initiale réussies !');
+      console.log('Connexion et synchronisation initiale réussies ! Rôle:', finalRole);
 
-      return { success: true };
+      return { success: true, role: finalRole };
     } catch (error: any) {
       console.error('Erreur login:', error);
       apiService.clearToken();
@@ -296,6 +419,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       setProfile(null);
       setUser(null);
+      setUserRole(null);
       setIsAuthenticated(false);
     } finally {
       setIsLoading(false);
@@ -322,6 +446,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         isAuthenticated,
         profile,
         user,
+        userRole,
         login,
         logout,
         refreshProfile,

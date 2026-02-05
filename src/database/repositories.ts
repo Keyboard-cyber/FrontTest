@@ -279,10 +279,121 @@ export const getSyncState = async (key: string): Promise<string | null> => {
   return result?.value || null;
 };
 
+// ==================== OFFLINE CREDENTIALS ====================
+
+export interface OfflineCredentials {
+  user_id: number;
+  email: string;
+  password_hash: string;
+  fullname: string;
+  user_uid?: string;
+  service_id?: number;
+  service_ids?: string;
+  zone?: string;
+  role?: 'agent' | 'controleur';
+  created_at: string;
+}
+
+// Simple hash pour stocker le mot de passe (pas pour la sécurité, juste pour ne pas stocker en clair)
+const simpleHash = (str: string): string => {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  // Ajouter le sel basé sur l'email pour plus de sécurité
+  return `h${Math.abs(hash).toString(36)}`;
+};
+
+export const saveOfflineCredentials = async (
+  email: string,
+  password: string,
+  profile: LocalProfile,
+  role: 'agent' | 'controleur' = 'agent'
+): Promise<void> => {
+  const db = await getDatabase();
+  
+  // Supprimer les anciens credentials pour cet utilisateur
+  await db.runAsync('DELETE FROM offline_credentials WHERE user_id = ?', [profile.user_id]);
+  
+  await db.runAsync(
+    `INSERT INTO offline_credentials (user_id, email, password_hash, fullname, user_uid, service_id, service_ids, zone, role, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      profile.user_id,
+      email.toLowerCase().trim(),
+      simpleHash(password + email.toLowerCase()),
+      profile.fullname,
+      profile.user_uid,
+      profile.service_id,
+      profile.service_ids || '[]',
+      profile.zone,
+      role,
+      new Date().toISOString()
+    ]
+  );
+};
+
+export const verifyOfflineCredentials = async (
+  email: string,
+  password: string
+): Promise<OfflineCredentials | null> => {
+  const db = await getDatabase();
+  
+  const result = await db.getFirstAsync(
+    'SELECT * FROM offline_credentials WHERE email = ?',
+    [email.toLowerCase().trim()]
+  ) as OfflineCredentials | null;
+  
+  if (!result) return null;
+  
+  // Vérifier le hash
+  const inputHash = simpleHash(password + email.toLowerCase());
+  if (result.password_hash !== inputHash) return null;
+  
+  return result;
+};
+
+export const getOfflineCredentials = async (email: string): Promise<OfflineCredentials | null> => {
+  const db = await getDatabase();
+  return await db.getFirstAsync(
+    'SELECT * FROM offline_credentials WHERE email = ?',
+    [email.toLowerCase().trim()]
+  ) as OfflineCredentials | null;
+};
+
+export const hasOfflineCredentials = async (): Promise<boolean> => {
+  const db = await getDatabase();
+  const result = await db.getFirstAsync('SELECT COUNT(*) as count FROM offline_credentials') as { count: number } | null;
+  return (result?.count || 0) > 0;
+};
+
 // ==================== UTILITIES ====================
 
-// Efface toutes les données (utilisé lors de la déconnexion manuelle)
+// Efface les données de session SAUF: historique, credentials offline, catégories et types de taxes
 export const clearAllData = async (): Promise<void> => {
+  const db = await getDatabase();
+  // NE PAS supprimer: 
+  // - local_payments_queue (historique)
+  // - offline_credentials (reconnexion offline)
+  // - local_tax_categorie (catégories de taxes)
+  // - local_tax_types (types de taxes)
+  await db.runAsync('DELETE FROM local_terminal');
+  await db.runAsync('DELETE FROM local_profile');
+  await db.runAsync('DELETE FROM sync_state');
+};
+
+// Efface uniquement les données d'authentification (conserve tout le reste)
+export const clearAuthData = async (): Promise<void> => {
+  const db = await getDatabase();
+  await db.runAsync('DELETE FROM local_terminal');
+  await db.runAsync('DELETE FROM local_profile');
+  // On garde: paiements, taxes, et credentials offline
+};
+
+// Efface TOUT y compris credentials offline (utilisé pour reset complet)
+export const clearAllDataComplete = async (): Promise<void> => {
   const db = await getDatabase();
   await db.runAsync('DELETE FROM local_payments_queue');
   await db.runAsync('DELETE FROM local_tax_types');
@@ -290,12 +401,5 @@ export const clearAllData = async (): Promise<void> => {
   await db.runAsync('DELETE FROM local_terminal');
   await db.runAsync('DELETE FROM local_profile');
   await db.runAsync('DELETE FROM sync_state');
-};
-
-// Efface uniquement les données d'authentification (conserve les paiements)
-export const clearAuthData = async (): Promise<void> => {
-  const db = await getDatabase();
-  await db.runAsync('DELETE FROM local_terminal');
-  await db.runAsync('DELETE FROM local_profile');
-  // On garde les paiements et les données de référence
+  await db.runAsync('DELETE FROM offline_credentials');
 };

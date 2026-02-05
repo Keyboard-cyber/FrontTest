@@ -6,7 +6,7 @@ export interface User {
   fullname: string;
   email: string;
   phone: string;
-  role: 'admin' | 'supervisor' | 'agent';
+  role: 'admin' | 'supervisor' | 'agent' | 'controleur' | 'controller';
   service_id: number;
   zone: string | null;
   is_active: boolean;

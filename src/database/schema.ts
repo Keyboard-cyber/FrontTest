@@ -79,6 +79,20 @@ CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Credentials offline (permet reconnexion hors ligne)
+CREATE TABLE IF NOT EXISTS offline_credentials (
+  user_id INTEGER PRIMARY KEY,
+  email TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  fullname TEXT NOT NULL,
+  user_uid TEXT,
+  service_id INTEGER,
+  service_ids TEXT DEFAULT '[]',
+  zone TEXT,
+  role TEXT DEFAULT 'agent',
+  created_at TEXT NOT NULL
+);
 `;
 
 export const CREATE_INDEXES_SQL = `
@@ -96,4 +110,5 @@ DROP TABLE IF EXISTS local_tax_categorie;
 DROP TABLE IF EXISTS local_terminal;
 DROP TABLE IF EXISTS local_profile;
 DROP TABLE IF EXISTS sync_state;
+DROP TABLE IF EXISTS offline_credentials;
 `;

@@ -15,7 +15,6 @@ import { useFocusEffect } from '@react-navigation/native';
 import { getAllPayments, getTaxCategorieById, getTaxTypeById, getLocalTerminal } from '../../src/database';
 import { syncService } from '../../src/services/sync.service';
 import { printerService } from '../../src/services/printer.service';
-import { receiptService } from '../../src/services/receipt.service';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { LocalPaymentQueue } from '../../src/types';
 
@@ -235,39 +234,17 @@ export default function HistoryScreen() {
   // Imprimer un reçu
   const handlePrint = async (payment: Payment) => {
     try {
-      // Récupérer les informations de catégorie, type et terminal
-      const [categorie, taxType, terminal] = await Promise.all([
-        getTaxCategorieById(payment.tax_categorie_id),
-        getTaxTypeById(payment.tax_type_id),
-        getLocalTerminal(),
-      ]);
-
-      // Générer le reçu avec le format officiel
-      const receiptText = receiptService.generateReceiptText({
+      await printerService.print({
         payment: {
           ...payment,
           local_uuid: payment.uuid,
         } as LocalPaymentQueue,
         agentName: user?.fullname || 'Agent',
-        agentZone: user?.zone || 'Zone',
-        categoryLabel: categorie?.label || 'Catégorie inconnue',
-        typeLabel: taxType?.label || 'Type inconnu',
-        terminalUid: terminal?.terminal_uid || `T-${payment.terminal_id}`,
-        agentUid: user?.uid,
-        cityName: 'KOLWEZI',
+        categoryLabel: payment.tax_categorie_label || 'Catégorie',
+        typeLabel: payment.tax_type_label || 'Type',
       });
-
-      // Générer les données QR
-      const qrData = receiptService.generateQrData({
-        ...payment,
-        local_uuid: payment.uuid,
-      } as LocalPaymentQueue);
-
-      // Imprimer
-      await printerService.printReceipt(receiptText, qrData);
     } catch (error) {
       console.error('Erreur impression:', error);
-      Alert.alert('Erreur', "Impossible d'imprimer le reçu");
     }
   };
 
@@ -314,7 +291,7 @@ export default function HistoryScreen() {
 
   // Rendu d'un paiement
   const renderPayment = ({ item }: { item: Payment }) => (
-    <TouchableOpacity style={styles.paymentCard} onPress={() => handlePrint(item)}>
+    <View style={styles.paymentCard}>
       <View style={styles.paymentHeader}>
         <View style={styles.paymentInfo}>
           <Text style={styles.payerName}>{item.payer_name}</Text>
@@ -351,7 +328,7 @@ export default function HistoryScreen() {
           <Text style={styles.printButtonText}>Imprimer</Text>
         </TouchableOpacity>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 
   // Rendu de l'en-tête de section
@@ -771,14 +748,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#4CAF50',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 6,
-    gap: 6,
+    gap: 4,
   },
   printButtonText: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '600',
   },
 

@@ -1,17 +1,29 @@
-import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-// Configuration des notifications
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+// Vérifier si on est dans Expo Go
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Import dynamique de expo-notifications (seulement si pas dans Expo Go)
+let Notifications: typeof import('expo-notifications') | null = null;
+
+// Initialiser les notifications seulement si pas dans Expo Go
+const initNotificationsModule = async () => {
+  if (!isExpoGo && !Notifications) {
+    Notifications = await import('expo-notifications');
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: true,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+  }
+  return Notifications;
+};
 
 export type NotificationType = 
   | 'payment_success'
@@ -34,7 +46,17 @@ class NotificationService {
   async initialize(): Promise<boolean> {
     if (this.initialized) return true;
 
+    // Désactiver les notifications dans Expo Go (SDK 53+)
+    if (isExpoGo) {
+      console.log('📵 Notifications push désactivées dans Expo Go (SDK 53+)');
+      this.initialized = true;
+      return true;
+    }
+
     try {
+      const NotificationsModule = await initNotificationsModule();
+      if (!NotificationsModule) return false;
+
       // Vérifier si c'est un appareil physique
       if (!Device.isDevice) {
         console.log('Notifications non disponibles sur émulateur');
@@ -42,11 +64,11 @@ class NotificationService {
       }
 
       // Demander les permissions
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
+      const { status: existingStatus } = await NotificationsModule.getPermissionsAsync();
       let finalStatus = existingStatus;
 
       if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
+        const { status } = await NotificationsModule.requestPermissionsAsync();
         finalStatus = status;
       }
 
@@ -57,23 +79,23 @@ class NotificationService {
 
       // Configuration Android
       if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
+        await NotificationsModule.setNotificationChannelAsync('default', {
           name: 'Notifications',
-          importance: Notifications.AndroidImportance.HIGH,
+          importance: NotificationsModule.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#7B61FF',
         });
 
-        await Notifications.setNotificationChannelAsync('payments', {
+        await NotificationsModule.setNotificationChannelAsync('payments', {
           name: 'Paiements',
-          importance: Notifications.AndroidImportance.HIGH,
+          importance: NotificationsModule.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#00C896',
         });
 
-        await Notifications.setNotificationChannelAsync('sync', {
+        await NotificationsModule.setNotificationChannelAsync('sync', {
           name: 'Synchronisation',
-          importance: Notifications.AndroidImportance.DEFAULT,
+          importance: NotificationsModule.AndroidImportance.DEFAULT,
           lightColor: '#00B4D8',
         });
       }
@@ -88,10 +110,14 @@ class NotificationService {
 
   // Obtenir le token push (pour notifications serveur)
   async getPushToken(): Promise<string | null> {
+    if (isExpoGo) return null;
     if (this.expoPushToken) return this.expoPushToken;
 
     try {
-      const token = await Notifications.getExpoPushTokenAsync({
+      const NotificationsModule = await initNotificationsModule();
+      if (!NotificationsModule) return null;
+      
+      const token = await NotificationsModule.getExpoPushTokenAsync({
         projectId: '0eb00763-82e5-402a-9d92-eb8f36a77cdd',
       });
       this.expoPushToken = token.data;
@@ -107,19 +133,23 @@ class NotificationService {
     type: NotificationType,
     customConfig?: Partial<NotificationConfig>
   ): Promise<string | null> {
+    if (isExpoGo) return null;
+    
     await this.initialize();
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return null;
 
     const config = this.getNotificationConfig(type, customConfig);
     
     try {
-      const id = await Notifications.scheduleNotificationAsync({
+      const id = await NotificationsModule.scheduleNotificationAsync({
         content: {
           title: config.title,
           body: config.body,
           data: { type, ...config.data },
           sound: true,
         },
-        trigger: null, // Immédiat
+        trigger: null,
       });
       return id;
     } catch (error) {
@@ -130,6 +160,7 @@ class NotificationService {
 
   // Notification paiement réussi
   async notifyPaymentSuccess(amount: number, payerName: string): Promise<void> {
+    if (isExpoGo) return;
     const formattedAmount = amount.toLocaleString('fr-FR') + ' FC';
     await this.sendLocalNotification('payment_success', {
       body: `Paiement de ${formattedAmount} reçu de ${payerName}`,
@@ -139,7 +170,7 @@ class NotificationService {
 
   // Notification sync terminée
   async notifySyncComplete(count: number): Promise<void> {
-    if (count === 0) return;
+    if (isExpoGo || count === 0) return;
     await this.sendLocalNotification('sync_complete', {
       body: `${count} paiement(s) synchronisé(s) avec succès`,
       data: { count },
@@ -148,6 +179,7 @@ class NotificationService {
 
   // Notification erreur sync
   async notifySyncError(failedCount: number): Promise<void> {
+    if (isExpoGo) return;
     await this.sendLocalNotification('sync_error', {
       body: `Échec de synchronisation de ${failedCount} paiement(s)`,
       data: { failedCount },
@@ -156,12 +188,13 @@ class NotificationService {
 
   // Notification hors ligne
   async notifyOfflineWarning(): Promise<void> {
+    if (isExpoGo) return;
     await this.sendLocalNotification('offline_warning');
   }
 
   // Notification paiements en attente
   async notifyPendingPayments(count: number): Promise<void> {
-    if (count === 0) return;
+    if (isExpoGo || count === 0) return;
     await this.sendLocalNotification('pending_payments', {
       body: `${count} paiement(s) en attente de synchronisation`,
       data: { count },
@@ -170,6 +203,7 @@ class NotificationService {
 
   // Notification résumé journalier
   async notifyDailySummary(totalAmount: number, count: number): Promise<void> {
+    if (isExpoGo) return;
     const formattedAmount = totalAmount.toLocaleString('fr-FR') + ' FC';
     await this.sendLocalNotification('daily_summary', {
       body: `${count} paiement(s) - Total: ${formattedAmount}`,
@@ -183,12 +217,16 @@ class NotificationService {
     triggerDate: Date,
     customConfig?: Partial<NotificationConfig>
   ): Promise<string | null> {
+    if (isExpoGo) return null;
+    
     await this.initialize();
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return null;
 
     const config = this.getNotificationConfig(type, customConfig);
     
     try {
-      const id = await Notifications.scheduleNotificationAsync({
+      const id = await NotificationsModule.scheduleNotificationAsync({
         content: {
           title: config.title,
           body: config.body,
@@ -196,7 +234,7 @@ class NotificationService {
           sound: true,
         },
         trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          type: NotificationsModule.SchedulableTriggerInputTypes.DATE,
           date: triggerDate,
         },
       });
@@ -209,20 +247,23 @@ class NotificationService {
 
   // Planifier rappel quotidien
   async scheduleDailyReminder(hour: number = 18, minute: number = 0): Promise<string | null> {
+    if (isExpoGo) return null;
+    
     await this.initialize();
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return null;
     
     try {
-      // Annuler les anciens rappels
       await this.cancelAllScheduledNotifications();
       
-      const id = await Notifications.scheduleNotificationAsync({
+      const id = await NotificationsModule.scheduleNotificationAsync({
         content: {
           title: '📊 Rappel quotidien',
           body: 'N\'oubliez pas de synchroniser vos paiements',
           sound: true,
         },
         trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.DAILY,
+          type: NotificationsModule.SchedulableTriggerInputTypes.DAILY,
           hour,
           minute,
         },
@@ -236,22 +277,34 @@ class NotificationService {
 
   // Annuler une notification
   async cancelNotification(id: string): Promise<void> {
-    await Notifications.cancelScheduledNotificationAsync(id);
+    if (isExpoGo) return;
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return;
+    await NotificationsModule.cancelScheduledNotificationAsync(id);
   }
 
   // Annuler toutes les notifications planifiées
   async cancelAllScheduledNotifications(): Promise<void> {
-    await Notifications.cancelAllScheduledNotificationsAsync();
+    if (isExpoGo) return;
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return;
+    await NotificationsModule.cancelAllScheduledNotificationsAsync();
   }
 
   // Effacer le badge
   async clearBadge(): Promise<void> {
-    await Notifications.setBadgeCountAsync(0);
+    if (isExpoGo) return;
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return;
+    await NotificationsModule.setBadgeCountAsync(0);
   }
 
   // Définir le badge
   async setBadge(count: number): Promise<void> {
-    await Notifications.setBadgeCountAsync(count);
+    if (isExpoGo) return;
+    const NotificationsModule = await initNotificationsModule();
+    if (!NotificationsModule) return;
+    await NotificationsModule.setBadgeCountAsync(count);
   }
 
   // Configurations par défaut
@@ -293,17 +346,27 @@ class NotificationService {
   }
 
   // Écouter les notifications reçues
-  addNotificationReceivedListener(
-    callback: (notification: Notifications.Notification) => void
-  ) {
-    return Notifications.addNotificationReceivedListener(callback);
+  addNotificationReceivedListener(callback: (notification: any) => void): { remove: () => void } {
+    if (isExpoGo) return { remove: () => {} };
+    
+    initNotificationsModule().then(NotificationsModule => {
+      if (NotificationsModule) {
+        NotificationsModule.addNotificationReceivedListener(callback);
+      }
+    });
+    return { remove: () => {} };
   }
 
   // Écouter les clics sur notification
-  addNotificationResponseListener(
-    callback: (response: Notifications.NotificationResponse) => void
-  ) {
-    return Notifications.addNotificationResponseReceivedListener(callback);
+  addNotificationResponseListener(callback: (response: any) => void): { remove: () => void } {
+    if (isExpoGo) return { remove: () => {} };
+    
+    initNotificationsModule().then(NotificationsModule => {
+      if (NotificationsModule) {
+        NotificationsModule.addNotificationResponseReceivedListener(callback);
+      }
+    });
+    return { remove: () => {} };
   }
 }
 

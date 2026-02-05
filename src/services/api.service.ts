@@ -133,6 +133,16 @@ class ApiService {
     return response.data.data;
   }
 
+  async getUserById(userId: number): Promise<User | null> {
+    try {
+      const response = await this.api.get<{ data: User }>(`/users/${userId}`);
+      return response.data.data;
+    } catch (error) {
+      console.log('Utilisateur non trouvé:', userId);
+      return null;
+    }
+  }
+
   // ==================== DONNÉES INITIALES AGENT ====================
 
   /**
@@ -298,6 +308,40 @@ class ApiService {
       return response.data.data;
     } catch (error) {
       return null;
+    }
+  }
+
+  // ==================== CONTROLLER FUNCTIONS ====================
+
+  /**
+   * Vérifie un paiement par son UUID (pour le contrôleur)
+   */
+  async verifyPayment(uuid: string): Promise<Payment | null> {
+    try {
+      // Essayer d'abord avec l'endpoint de vérification spécifique
+      const response = await this.api.get<{ data: Payment }>(`${ENDPOINTS.PAYMENTS}/verify/${uuid}`);
+      return response.data.data;
+    } catch (error: any) {
+      // Si endpoint non trouvé, utiliser getPaymentByUuid
+      if (error.response?.status === 404) {
+        return this.getPaymentByUuid(uuid);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Recherche des paiements par nom de payeur (pour le contrôleur)
+   */
+  async searchPayments(payerName: string): Promise<Payment[]> {
+    try {
+      const response = await this.api.get<{ data: Payment[] }>(
+        `${ENDPOINTS.PAYMENTS}?search=${encodeURIComponent(payerName)}`
+      );
+      return response.data.data || [];
+    } catch (error) {
+      console.error('Erreur recherche paiements:', error);
+      return [];
     }
   }
 

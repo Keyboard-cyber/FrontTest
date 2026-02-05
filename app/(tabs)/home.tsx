@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,8 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
 } from 'react-native';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../src/contexts';
@@ -21,6 +22,7 @@ import { scale, fontScale, rs, rf, rr, wp, hp, isSmallScreen } from '../../src/u
 
 export default function HomeScreen() {
   const { profile } = useAuth();
+  const router = useRouter();
   const { isOnline, isSyncing, pendingCount, syncAll } = useSyncWithPaymentUpdates();
   const [stats, setStats] = useState({ count: 0, total: 0 });
   const [refreshing, setRefreshing] = useState(false);
@@ -51,6 +53,13 @@ export default function HomeScreen() {
       setStats(todayStats);
     }
   };
+
+  // Recharger les stats à chaque fois que l'écran reçoit le focus
+  useFocusEffect(
+    useCallback(() => {
+      loadStats();
+    }, [profile])
+  );
 
   useEffect(() => {
     loadStats();

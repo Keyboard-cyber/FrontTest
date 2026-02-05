@@ -1,23 +1,20 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useSync } from '../../src/contexts';
 import { Colors, BorderRadius } from '../../src/theme';
 import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-export default function TabsLayout() {
-  const { pendingCount } = useSync();
+export default function ControllerTabsLayout() {
   const insets = useSafeAreaInsets();
   
-  // Calculer la hauteur de la tab bar avec marge pour la navbar Android
   const tabBarHeight = 60;
   const bottomPadding = Platform.OS === 'android' ? Math.max(insets.bottom, 10) : insets.bottom;
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors.primary,
+        tabBarActiveTintColor: '#FF9500',
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarStyle: {
           backgroundColor: Colors.backgroundSecondary,
@@ -54,14 +51,14 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen
-        name="home"
+        name="scan"
         options={{
-          title: 'Accueil',
+          title: 'Scanner',
           headerShown: false,
-          tabBarIcon: ({ focused, color, size }) => (
+          tabBarIcon: ({ focused, color }) => (
             <View style={focused ? styles.activeIconContainer : undefined}>
               <Ionicons
-                name={focused ? 'home' : 'home-outline'}
+                name={focused ? 'qr-code' : 'qr-code-outline'}
                 size={24}
                 color={color}
               />
@@ -70,26 +67,19 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="search"
         options={{
-          title: 'Historique',
-          headerTitle: 'Historique',
-          tabBarIcon: ({ focused, color, size }) => (
+          title: 'Recherche',
+          headerTitle: 'Recherche par Nom',
+          tabBarIcon: ({ focused, color }) => (
             <View style={focused ? styles.activeIconContainer : undefined}>
               <Ionicons
-                name={focused ? 'time' : 'time-outline'}
+                name={focused ? 'search' : 'search-outline'}
                 size={24}
                 color={color}
               />
             </View>
           ),
-          tabBarBadge: pendingCount > 0 ? pendingCount : undefined,
-          tabBarBadgeStyle: {
-            backgroundColor: Colors.warning,
-            color: '#FFFFFF',
-            fontSize: 10,
-            fontWeight: '700',
-          },
         }}
       />
       <Tabs.Screen
@@ -97,7 +87,7 @@ export default function TabsLayout() {
         options={{
           title: 'Profil',
           headerShown: false,
-          tabBarIcon: ({ focused, color, size }) => (
+          tabBarIcon: ({ focused, color }) => (
             <View style={focused ? styles.activeIconContainer : undefined}>
               <Ionicons
                 name={focused ? 'person' : 'person-outline'}
@@ -114,7 +104,7 @@ export default function TabsLayout() {
 
 const styles = StyleSheet.create({
   activeIconContainer: {
-    backgroundColor: 'rgba(123, 97, 255, 0.15)',
+    backgroundColor: 'rgba(255, 149, 0, 0.15)',
     borderRadius: 12,
     padding: 8,
   },

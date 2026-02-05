@@ -61,6 +61,12 @@ export default function RootLayout() {
                   },
                 }} 
               />
+              <Stack.Screen 
+                name="(controller)" 
+                options={{ 
+                  headerShown: false,
+                }} 
+              />
             </Stack>
           </PaymentProvider>
         </SyncProvider>

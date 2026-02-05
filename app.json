@@ -27,6 +27,7 @@
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.CAMERA",
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
         "android.permission.BLUETOOTH_CONNECT",
@@ -42,6 +43,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Autoriser $(PRODUCT_NAME) à accéder à la caméra pour scanner les QR codes"
+        }
+      ],
       [
         "expo-notifications",
         {

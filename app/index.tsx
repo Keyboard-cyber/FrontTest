@@ -4,7 +4,7 @@ import { Redirect } from 'expo-router';
 import { useAuth } from '../src/contexts';
 
 export default function Index() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, userRole } = useAuth();
 
   if (isLoading) {
     return (
@@ -17,6 +17,10 @@ export default function Index() {
   }
 
   if (isAuthenticated) {
+    // Rediriger selon le rôle de l'utilisateur
+    if (userRole === 'controleur') {
+      return <Redirect href={'/(controller)/scan' as any} />;
+    }
     return <Redirect href="/(tabs)/home" />;
   }
 

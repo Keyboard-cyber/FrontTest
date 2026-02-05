@@ -11,6 +11,7 @@ import { qrCodeService } from './qrcode.service';
 interface ReceiptData {
   payment: LocalPaymentQueue;
   agentName: string;
+  agentZone?: string | null;
   categoryLabel: string;
   typeLabel: string;
 }
@@ -62,7 +63,7 @@ class PrinterService {
    * Génère le HTML du reçu avec QR code local
    */
   private async generateHtml(data: ReceiptData): Promise<string> {
-    const { payment, agentName, categoryLabel, typeLabel } = data;
+    const { payment, agentName, agentZone, categoryLabel, typeLabel } = data;
     
     // Générer la signature sécurisée
     const signature = payment.qr_signature || this.generateSignature(payment);
@@ -135,6 +136,7 @@ class PrinterService {
   
   <div class="row"><span>Date:</span><span>${this.formatDate(payment.paid_at)}</span></div>
   <div class="row"><span>Agent:</span><span>${agentName}</span></div>
+  ${agentZone ? `<div class="row"><span>Zone:</span><span>${agentZone}</span></div>` : ''}
   
   <div class="line"></div>
   

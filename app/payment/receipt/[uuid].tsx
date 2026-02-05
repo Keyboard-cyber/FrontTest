@@ -245,6 +245,7 @@ ID Agent: ${profile?.user_uid}
         <View style={styles.agentInfo}>
           <Text style={styles.agentLabel}>Agent collecteur</Text>
           <Text style={styles.agentName}>{profile?.fullname}</Text>
+          {profile?.zone && <Text style={styles.agentId}>Zone: {profile.zone}</Text>}
           <Text style={styles.agentId}>ID: {profile?.user_uid}</Text>
         </View>
       </View>

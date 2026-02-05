@@ -79,6 +79,7 @@ export default function PrintPreviewScreen() {
       const success = await printerService.print({
         payment,
         agentName: profile.fullname,
+        agentZone: profile.zone,
         categoryLabel: payment.categoryLabel || 'N/A',
         typeLabel: payment.typeLabel || 'N/A',
       });
@@ -248,6 +249,7 @@ export default function PrintPreviewScreen() {
           <View style={styles.agentInfo}>
             <Text style={styles.agentLabel}>Agent collecteur</Text>
             <Text style={styles.agentName}>{profile?.fullname}</Text>
+            {profile?.zone && <Text style={styles.agentId}>Zone: {profile.zone}</Text>}
           </View>
         </View>
       </ScrollView>

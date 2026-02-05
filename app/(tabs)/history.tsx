@@ -234,14 +234,20 @@ export default function HistoryScreen() {
   // Imprimer un reçu
   const handlePrint = async (payment: Payment) => {
     try {
+      // Récupérer les noms de catégorie et type depuis la base
+      const [categorie, taxType] = await Promise.all([
+        getTaxCategorieById(payment.tax_categorie_id),
+        getTaxTypeById(payment.tax_type_id),
+      ]);
+
       await printerService.print({
         payment: {
           ...payment,
           local_uuid: payment.uuid,
         } as LocalPaymentQueue,
         agentName: user?.fullname || 'Agent',
-        categoryLabel: payment.tax_categorie_label || 'Catégorie',
-        typeLabel: payment.tax_type_label || 'Type',
+        categoryLabel: categorie?.label || 'Catégorie',
+        typeLabel: taxType?.label || 'Type',
       });
     } catch (error) {
       console.error('Erreur impression:', error);

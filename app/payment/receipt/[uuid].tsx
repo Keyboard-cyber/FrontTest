@@ -218,11 +218,6 @@ ID Agent: ${profile?.user_uid}
             <Text style={styles.detailValue}>{payment.quantity}</Text>
           </View>
 
-          <View style={styles.detailRow}>
-            <Text style={styles.detailLabel}>Prix unitaire</Text>
-            <Text style={styles.detailValue}>{formatCurrency(payment.unit_price)}</Text>
-          </View>
-
           {payment.chassis_number && (
             <>
               <View style={styles.separator} />

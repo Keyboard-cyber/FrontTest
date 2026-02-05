@@ -209,9 +209,9 @@ export default function NewPaymentScreen() {
       // 3. Rafraîchir les données pour obtenir le numéro de reçu du serveur
       await refreshData();
 
-      // 4. Naviguer vers le reçu (avec données synchronisées si possible)
+      // 4. Naviguer vers la page de prévisualisation avant impression
       router.replace({
-        pathname: '/payment/receipt',
+        pathname: '/payment/preview/[uuid]',
         params: { uuid: uuid }
       });
     } catch (error) {
@@ -385,38 +385,38 @@ export default function NewPaymentScreen() {
                 </View>
               </View>
 
-              {selectedTaxType?.require_chassis_number === 1 && (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Numéro de châssis *</Text>
-                  <View style={styles.inputWrapper}>
-                    <Ionicons name="car-outline" size={18} color={Colors.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.input}
-                      value={chassisNumber}
-                      onChangeText={setChassisNumber}
-                      placeholder="Entrez le numéro de châssis"
-                      placeholderTextColor={Colors.textMuted}
-                      autoCapitalize="characters"
-                    />
-                  </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Numéro de châssis {selectedTaxType?.require_chassis_number === 1 ? '*' : '(optionnel)'}
+                </Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="car-outline" size={18} color={Colors.textMuted} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    value={chassisNumber}
+                    onChangeText={setChassisNumber}
+                    placeholder="Entrez le numéro de châssis"
+                    placeholderTextColor={Colors.textMuted}
+                    autoCapitalize="characters"
+                  />
                 </View>
-              )}
+              </View>
 
-              {selectedTaxType?.require_color === 1 && (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.label}>Couleur du véhicule *</Text>
-                  <View style={styles.inputWrapper}>
-                    <Ionicons name="color-palette-outline" size={18} color={Colors.textMuted} style={styles.inputIcon} />
-                    <TextInput
-                      style={styles.input}
-                      value={vehicleColor}
-                      onChangeText={setVehicleColor}
-                      placeholder="Entrez la couleur"
-                      placeholderTextColor={Colors.textMuted}
-                    />
-                  </View>
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Couleur du véhicule {selectedTaxType?.require_color === 1 ? '*' : '(optionnel)'}
+                </Text>
+                <View style={styles.inputWrapper}>
+                  <Ionicons name="color-palette-outline" size={18} color={Colors.textMuted} style={styles.inputIcon} />
+                  <TextInput
+                    style={styles.input}
+                    value={vehicleColor}
+                    onChangeText={setVehicleColor}
+                    placeholder="Entrez la couleur"
+                    placeholderTextColor={Colors.textMuted}
+                  />
                 </View>
-              )}
+              </View>
 
               <View style={styles.totalContainer}>
                 <Text style={styles.totalLabel}>Total à payer</Text>

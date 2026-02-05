@@ -58,11 +58,29 @@ export default function HistoryScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [periodFilter, setPeriodFilter] = useState<PeriodFilter>('ALL');
 
-  // Charger les paiements
+  // Charger les paiements avec les noms de catégorie et type
   const loadPayments = useCallback(async () => {
     try {
       const data = await getAllPayments();
-      const mapped = data.map(mapToPayment);
+      
+      // Récupérer les labels pour chaque paiement
+      const mapped = await Promise.all(
+        data.map(async (item) => {
+          const [categorie, taxType] = await Promise.all([
+            getTaxCategorieById(item.tax_categorie_id),
+            getTaxTypeById(item.tax_type_id),
+          ]);
+          
+          return {
+            ...item,
+            uuid: item.local_uuid,
+            sync_status: item.status.toLowerCase(),
+            tax_type_label: taxType?.label || 'Type inconnu',
+            tax_categorie_label: categorie?.label || 'Catégorie inconnue',
+          };
+        })
+      );
+      
       setPayments(mapped);
     } catch (error) {
       console.error('Erreur chargement paiements:', error);

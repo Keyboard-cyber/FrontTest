@@ -1,10 +1,12 @@
 /**
  * Service d'impression simple
  * Utilise expo-print pour imprimer des reçus
+ * QR Code généré localement avec signature
  */
 
 import * as Print from 'expo-print';
 import { LocalPaymentQueue } from '../types';
+import { qrCodeService } from './qrcode.service';
 
 interface ReceiptData {
   payment: LocalPaymentQueue;
@@ -38,11 +40,40 @@ class PrinterService {
   }
 
   /**
-   * Génère le HTML du reçu
+   * Génère une signature pour le QR code
+   * Format: uuid|montant|date|agent_id|checksum
    */
-  private generateHtml(data: ReceiptData): string {
+  private generateSignature(payment: LocalPaymentQueue): string {
+    const data = `${payment.local_uuid}|${payment.total_amount}|${payment.paid_at}|${payment.user_id}`;
+    
+    // Générer un checksum simple (hash basique)
+    let hash = 0;
+    for (let i = 0; i < data.length; i++) {
+      const char = data.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    const checksum = Math.abs(hash).toString(16).toUpperCase().padStart(8, '0');
+    
+    return `${data}|${checksum}`;
+  }
+
+  /**
+   * Génère le HTML du reçu avec QR code local
+   */
+  private async generateHtml(data: ReceiptData): Promise<string> {
     const { payment, agentName, categoryLabel, typeLabel } = data;
-    const qrData = payment.qr_signature || `${payment.local_uuid}|${payment.total_amount}|${payment.paid_at}|${payment.user_id}`;
+    
+    // Générer la signature sécurisée
+    const signature = payment.qr_signature || this.generateSignature(payment);
+    
+    // Générer le QR code en SVG localement
+    let qrSvg = '';
+    try {
+      qrSvg = await qrCodeService.toSvg(signature, 100);
+    } catch (e) {
+      console.warn('Erreur génération QR:', e);
+    }
 
     return `<!DOCTYPE html>
 <html>
@@ -63,13 +94,15 @@ class PrinterService {
     .total { font-size: 16px; font-weight: bold; margin: 10px 0; }
     h1 { font-size: 14px; margin: 5px 0; }
     h2 { font-size: 12px; margin: 5px 0; }
+    .qr-container { margin: 10px auto; width: 100px; height: 100px; }
+    .signature { font-size: 8px; color: #666; word-break: break-all; margin-top: 5px; }
   </style>
 </head>
 <body>
   <div class="center">
     <h1>REPUBLIQUE DEMOCRATIQUE DU CONGO</h1>
     <h2>PROVINCE DU LUALABA</h2>
-    <h2>VILLE DE KOLWEZI</h2>
+    <h2>SECTEUR LUILU</h2>
   </div>
   
   <div class="line"></div>
@@ -88,10 +121,9 @@ class PrinterService {
   
   <div class="row"><span>Catégorie:</span><span>${categoryLabel}</span></div>
   <div class="row"><span>Type:</span><span>${typeLabel}</span></div>
-  <div class="row"><span>Quantité:</span><span>${payment.quantity}</span></div>
-  <div class="row"><span>Prix unit.:</span><span>${this.formatAmount(payment.unit_price)}</span></div>
   
   ${payment.chassis_number ? `<div class="row"><span>Châssis:</span><span>${payment.chassis_number}</span></div>` : ''}
+  ${payment.vehicle_color ? `<div class="row"><span>Couleur:</span><span>${payment.vehicle_color}</span></div>` : ''}
   
   <div class="line"></div>
   
@@ -106,8 +138,9 @@ class PrinterService {
   
   <div class="line"></div>
   
-  <div class="center" style="margin-top: 10px;">
-    <img src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(qrData)}" width="100" height="100" />
+  <div class="center">
+    <div class="qr-container">${qrSvg}</div>
+    <div class="signature">Sig: ${signature.split('|').pop()}</div>
   </div>
   
   <div class="center" style="margin-top: 10px; font-size: 10px;">
@@ -122,7 +155,7 @@ class PrinterService {
    */
   async print(data: ReceiptData): Promise<boolean> {
     try {
-      const html = this.generateHtml(data);
+      const html = await this.generateHtml(data);
       await Print.printAsync({ html });
       return true;
     } catch (error: any) {

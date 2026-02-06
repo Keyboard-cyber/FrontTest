@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -125,16 +126,10 @@ export default function ProfileScreen() {
           style={styles.header}
         >
           <View style={styles.avatarContainer}>
-            <LinearGradient
-              colors={[Colors.primary, Colors.accent]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.avatar}
-            >
-              <Text style={styles.avatarText}>
-                {profile?.fullname?.charAt(0).toUpperCase() || 'A'}
-              </Text>
-            </LinearGradient>
+            <Image
+              source={require('../../assets/avatar.png')}
+              style={styles.avatarImage}
+            />
           </View>
           <Text style={styles.name}>{profile?.fullname}</Text>
           <Text style={styles.uid}>ID: {profile?.user_uid}</Text>
@@ -360,6 +355,11 @@ const styles = StyleSheet.create({
   avatarContainer: {
     marginBottom: rs.lg,
     ...Shadows.glow,
+  },
+  avatarImage: {
+    width: scale(90),
+    height: scale(90),
+    borderRadius: scale(45),
   },
   avatar: {
     width: scale(90),

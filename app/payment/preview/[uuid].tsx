@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { useLocalSearchParams, router } from 'expo-router';
+import { useLocalSearchParams, router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
@@ -110,6 +110,7 @@ export default function PrintPreviewScreen() {
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
+        <Stack.Screen options={{ headerShown: false }} />
         <ActivityIndicator size="large" color={Colors.primary} />
         <Text style={styles.loadingText}>Chargement du reçu...</Text>
       </View>
@@ -119,6 +120,7 @@ export default function PrintPreviewScreen() {
   if (!payment) {
     return (
       <View style={styles.errorContainer}>
+        <Stack.Screen options={{ headerShown: false }} />
         <Ionicons name="alert-circle" size={60} color={Colors.error} />
         <Text style={styles.errorText}>Paiement non trouvé</Text>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
@@ -139,6 +141,7 @@ export default function PrintPreviewScreen() {
 
   return (
     <View style={styles.container}>
+      <Stack.Screen options={{ headerShown: false }} />
       {/* Header */}
       <LinearGradient
         colors={[Colors.primary, Colors.primaryDark]}
@@ -477,6 +480,11 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     fontWeight: FontWeights.semibold,
     color: Colors.textPrimary,
+  },
+  agentId: {
+    fontSize: FontSizes.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
   },
   actionsContainer: {
     padding: Spacing.md,

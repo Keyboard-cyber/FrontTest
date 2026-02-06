@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -41,7 +42,10 @@ export default function ControllerProfileScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.avatarContainer}>
-            <Ionicons name="shield-checkmark" size={48} color="#FF9500" />
+            <Image
+              source={require('../../assets/avatar.png')}
+              style={styles.avatarImage}
+            />
           </View>
           <Text style={styles.userName}>{profile?.fullname || user?.fullname}</Text>
           <View style={styles.roleBadge}>
@@ -129,6 +133,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
   },
   userName: {
     fontSize: 24,

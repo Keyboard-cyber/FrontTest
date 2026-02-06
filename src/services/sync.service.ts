@@ -25,8 +25,25 @@ class SyncService {
     }
   }
 
+  // Vérifier si l'utilisateur est bloqué (is_active === false)
+  async checkUserBlocked(): Promise<{ isBlocked: boolean; reason?: string }> {
+    try {
+      const { isActive, user } = await apiService.checkUserStatus();
+      console.log('🔍 checkUserBlocked - isActive:', isActive, '| user:', user?.fullname);
+      
+      if (!isActive) {
+        console.log('🚫 Utilisateur bloqué détecté:', user?.fullname);
+        return { isBlocked: true, reason: 'Votre compte a été désactivé' };
+      }
+      return { isBlocked: false };
+    } catch (error) {
+      console.log('Erreur vérification statut - considéré comme non-bloqué:', error);
+      return { isBlocked: false };
+    }
+  }
+
   // Synchroniser les données de référence (catégories et types de taxes)
-  async syncReferenceData(): Promise<{ success: boolean; error?: string }> {
+  async syncReferenceData(): Promise<{ success: boolean; error?: string; userBlocked?: boolean }> {
     try {
       const online = await this.isOnline();
       if (!online) {
@@ -41,6 +58,13 @@ class SyncService {
       // S'assurer que le token est chargé dans le service API
       if (profile.token) {
         apiService.setToken(profile.token);
+      }
+
+      // Vérification rapide du statut utilisateur
+      const blockStatus = await this.checkUserBlocked();
+      if (blockStatus.isBlocked) {
+        apiService.notifyUserBlocked(blockStatus.reason);
+        return { success: false, error: blockStatus.reason, userBlocked: true };
       }
 
       // Récupérer les catégories
@@ -83,13 +107,13 @@ class SyncService {
   }
 
   // Synchroniser les paiements en attente vers le serveur
-  async syncPendingPayments(): Promise<{ synced: number; failed: number; errors: string[] }> {
+  async syncPendingPayments(): Promise<{ synced: number; failed: number; errors: string[]; userBlocked?: boolean }> {
     if (this.isSyncing) {
       return { synced: 0, failed: 0, errors: ['Synchronisation déjà en cours'] };
     }
 
     this.isSyncing = true;
-    const result = { synced: 0, failed: 0, errors: [] as string[] };
+    const result = { synced: 0, failed: 0, errors: [] as string[], userBlocked: false };
 
     try {
       const online = await this.isOnline();
@@ -104,6 +128,15 @@ class SyncService {
         apiService.setToken(profile.token);
       } else {
         result.errors.push('Non authentifié');
+        return result;
+      }
+
+      // Vérification rapide du statut utilisateur
+      const blockStatus = await this.checkUserBlocked();
+      if (blockStatus.isBlocked) {
+        apiService.notifyUserBlocked(blockStatus.reason);
+        result.errors.push(blockStatus.reason || 'Compte bloqué');
+        result.userBlocked = true;
         return result;
       }
 
@@ -147,10 +180,19 @@ class SyncService {
         } catch (error: any) {
           console.error(`Erreur sync paiement ${payment.local_uuid}:`, error);
           
-          // Log détaillé de l'erreur 422
+          // Log détaillé de l'erreur
           if (error.response) {
             console.error('Status:', error.response.status);
             console.error('Détails erreur serveur:', JSON.stringify(error.response.data, null, 2));
+            
+            // Vérifier si c'est une 403 avec force_logout (utilisateur bloqué)
+            if (error.response.status === 403 && error.response.data?.force_logout === true) {
+              console.log('🚫 Utilisateur bloqué détecté pendant syncPendingPayments - arrêt immédiat');
+              result.userBlocked = true;
+              result.errors.push(error.response.data?.message || 'Compte bloqué');
+              // Arrêter la boucle immédiatement
+              break;
+            }
           }
           
           // Vérifier si le paiement existe déjà sur le serveur (UUID déjà utilisé)

@@ -116,12 +116,12 @@ export default function ScanScreen() {
         let agentName = `Agent #${payment.user_id}`;
         try {
           const localProfile = await getLocalProfile();
-          if (localProfile && localProfile.id === payment.user_id) {
-            agentName = localProfile.name;
+          if (localProfile && localProfile.user_id === payment.user_id) {
+            agentName = localProfile.fullname;
           } else {
             const user = await apiService.getUserById(payment.user_id);
             if (user) {
-              agentName = user.name;
+              agentName = user.fullname;
             }
           }
         } catch (e) {

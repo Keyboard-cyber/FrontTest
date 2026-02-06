@@ -14,12 +14,15 @@ export interface AgentInitialData {
 
 // Callback pour gérer les erreurs 401
 type UnauthorizedCallback = () => void;
+// Callback pour gérer les utilisateurs bloqués
+type UserBlockedCallback = (reason?: string) => void;
 
 class ApiService {
   private api: AxiosInstance;
   private token: string | null = null;
   private tokenLoaded: boolean = false;
   private onUnauthorizedCallback: UnauthorizedCallback | null = null;
+  private onUserBlockedCallback: UserBlockedCallback | null = null;
 
   constructor() {
     this.api = axios.create({
@@ -66,6 +69,23 @@ class ApiService {
             this.onUnauthorizedCallback();
           }
         }
+        
+        // Gérer la réponse 403 avec force_logout (utilisateur bloqué)
+        if (error.response?.status === 403) {
+          const data = error.response.data as any;
+          if (data?.force_logout === true) {
+            console.log('🚫 Forbidden - Utilisateur bloqué, force_logout détecté');
+            const reason = data?.message || 'Votre compte a été bloqué';
+            // Réinitialiser le token
+            this.token = null;
+            this.tokenLoaded = false;
+            // Notifier l'application que l'utilisateur est bloqué
+            if (this.onUserBlockedCallback) {
+              this.onUserBlockedCallback(reason);
+            }
+          }
+        }
+        
         return Promise.reject(error);
       }
     );
@@ -74,6 +94,37 @@ class ApiService {
   // Définir le callback pour les erreurs 401
   onUnauthorized(callback: UnauthorizedCallback): void {
     this.onUnauthorizedCallback = callback;
+  }
+
+  // Définir le callback pour les utilisateurs bloqués
+  onUserBlocked(callback: UserBlockedCallback): void {
+    this.onUserBlockedCallback = callback;
+  }
+
+  // Notifier que l'utilisateur est bloqué (appelé par SyncService)
+  notifyUserBlocked(reason?: string): void {
+    if (this.onUserBlockedCallback) {
+      this.onUserBlockedCallback(reason);
+    }
+  }
+
+  // Vérifier le statut de l'utilisateur (is_active)
+  async checkUserStatus(): Promise<{ isActive: boolean; user?: User }> {
+    try {
+      const user = await this.getMe();
+      const rawIsActive = user.is_active as unknown;
+      console.log('🔍 Vérification statut utilisateur:', user.fullname, '| is_active:', rawIsActive, '| type:', typeof rawIsActive);
+      
+      // Gérer les cas: boolean false, number 0, string "0" ou "false"
+      const isActive = rawIsActive === true || rawIsActive === 1 || rawIsActive === '1';
+      console.log('🔍 Résultat isActive:', isActive);
+      
+      return { isActive, user };
+    } catch (error: any) {
+      console.error('Erreur vérification statut utilisateur:', error);
+      // En cas d'erreur réseau, on considère l'utilisateur comme actif pour ne pas bloquer
+      return { isActive: true };
+    }
   }
 
   // Charger le token depuis le stockage local

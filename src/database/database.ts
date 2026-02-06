@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { CREATE_TABLES_SQL, CREATE_INDEXES_SQL } from './schema';
 
-const DB_NAME = 'taxe_agent_v3.db'; // Version 3 - ajout service_ids (array)
+const DB_NAME = 'taxe_agent_v4.db'; // Version 4 - ajout colonne role
 
 let db: any = null;
 
@@ -187,7 +187,28 @@ export const initializeDatabase = async (): Promise<void> => {
     }
   }
   
+  // Migrations: ajouter les colonnes manquantes
+  await runMigrations(database);
+  
   console.log('Database initialized successfully');
+};
+
+// Exécuter les migrations pour les colonnes manquantes
+const runMigrations = async (database: any): Promise<void> => {
+  try {
+    // Vérifier et ajouter la colonne 'role' à offline_credentials si elle n'existe pas
+    try {
+      await database.execAsync(`ALTER TABLE offline_credentials ADD COLUMN role TEXT DEFAULT 'agent';`);
+      console.log('Migration: Added role column to offline_credentials');
+    } catch (e: any) {
+      // La colonne existe déjà, ignorer l'erreur
+      if (!e.message?.includes('duplicate column')) {
+        console.log('Role column already exists or migration skipped');
+      }
+    }
+  } catch (error) {
+    console.log('Migrations completed with some skipped (columns may already exist)');
+  }
 };
 
 export const closeDatabase = async (): Promise<void> => {

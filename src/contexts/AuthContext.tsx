@@ -61,6 +61,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setIsAuthenticated(false);
   };
 
+  // Fonction pour gérer la déconnexion quand l'utilisateur est bloqué
+  const handleUserBlocked = async (reason?: string) => {
+    console.log('🚫 Utilisateur bloqué - Déconnexion automatique:', reason);
+    // Nettoyer toutes les données et déconnecter
+    await clearAllData();
+    setProfile(null);
+    setUser(null);
+    setUserRole(null);
+    setIsAuthenticated(false);
+  };
+
   // Initialiser l'application
   useEffect(() => {
     const init = async () => {
@@ -70,6 +81,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         // Configurer le callback pour les erreurs 401
         apiService.onUnauthorized(handleTokenExpired);
+        
+        // Configurer le callback pour les utilisateurs bloqués
+        apiService.onUserBlocked(handleUserBlocked);
         
         // Vérifier s'il y a un profil local
         const localProfile = await getLocalProfile();

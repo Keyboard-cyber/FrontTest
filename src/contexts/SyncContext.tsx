@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode, useRef } from 'react';
+import { Alert } from 'react-native';
 import { syncService } from '../services';
 import { notificationService } from '../services/notification.service';
 import { 
@@ -37,13 +38,34 @@ interface SyncProviderProps {
 }
 
 export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
-  const { isAuthenticated, profile } = useAuth();
+  const { isAuthenticated, profile, logout } = useAuth();
   const [isOnline, setIsOnline] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
   const [categories, setCategories] = useState<LocalTaxCategorie[]>([]);
   const [taxTypes, setTaxTypes] = useState<LocalTaxType[]>([]);
+  const userBlockedRef = useRef(false);
+
+  // Fonction pour gérer le blocage utilisateur
+  const handleUserBlocked = useCallback(async (reason?: string) => {
+    if (userBlockedRef.current) return; // Éviter les appels multiples
+    userBlockedRef.current = true;
+    
+    console.log('🚫 Utilisateur bloqué détecté pendant la synchronisation');
+    Alert.alert(
+      'Compte désactivé',
+      reason || 'Votre compte a été désactivé. Vous allez être déconnecté.',
+      [{ text: 'OK', onPress: () => logout() }]
+    );
+  }, [logout]);
+
+  // Réinitialiser le flag de blocage quand l'utilisateur se reconnecte
+  useEffect(() => {
+    if (isAuthenticated) {
+      userBlockedRef.current = false;
+    }
+  }, [isAuthenticated]);
 
   // Vérifier la connectivité périodiquement
   useEffect(() => {
@@ -67,7 +89,7 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
 
   // Synchronisation automatique des paiements en attente quand en ligne
   useEffect(() => {
-    if (isAuthenticated && isOnline && pendingCount > 0 && !isSyncing) {
+    if (isAuthenticated && isOnline && pendingCount > 0 && !isSyncing && !userBlockedRef.current) {
       console.log('Synchronisation automatique - paiements en attente:', pendingCount);
       syncPayments();
     }
@@ -78,6 +100,10 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     if (!isAuthenticated || !isOnline) return;
 
     const syncInterval = setInterval(async () => {
+      if (userBlockedRef.current) {
+        console.log('Sync périodique annulée - utilisateur bloqué');
+        return;
+      }
       const pending = await getPendingPayments();
       if (pending.length > 0 && !isSyncing) {
         console.log('Sync périodique - paiements en attente:', pending.length);
@@ -110,15 +136,23 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
   }, [profile]);
 
   const syncAll = useCallback(async () => {
-    if (isSyncing) return;
+    if (isSyncing || userBlockedRef.current) return;
 
     setIsSyncing(true);
     try {
       // Synchroniser les données de référence
-      await syncService.syncReferenceData();
+      const refResult = await syncService.syncReferenceData();
+      if (refResult.userBlocked) {
+        handleUserBlocked(refResult.error);
+        return;
+      }
       
       // Synchroniser les paiements
-      await syncService.syncPendingPayments();
+      const payResult = await syncService.syncPendingPayments();
+      if (payResult.userBlocked) {
+        handleUserBlocked(payResult.errors[0]);
+        return;
+      }
       
       // Rafraîchir les données locales
       await refreshData();
@@ -127,14 +161,21 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     } finally {
       setIsSyncing(false);
     }
-  }, [isSyncing, refreshData]);
+  }, [isSyncing, refreshData, handleUserBlocked]);
 
   const syncPayments = useCallback(async (): Promise<{ synced: number; failed: number }> => {
-    if (isSyncing) return { synced: 0, failed: 0 };
+    if (isSyncing || userBlockedRef.current) return { synced: 0, failed: 0 };
 
     setIsSyncing(true);
     try {
       const result = await syncService.syncPendingPayments();
+      
+      // Vérifier si l'utilisateur est bloqué
+      if (result.userBlocked) {
+        handleUserBlocked(result.errors[0]);
+        return { synced: 0, failed: 0 };
+      }
+      
       await refreshData();
       
       // Notifications
@@ -152,7 +193,7 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     } finally {
       setIsSyncing(false);
     }
-  }, [isSyncing, refreshData]);
+  }, [isSyncing, refreshData, handleUserBlocked]);
 
   return (
     <SyncContext.Provider

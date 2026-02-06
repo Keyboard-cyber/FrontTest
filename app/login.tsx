@@ -10,7 +10,10 @@ import {
   Platform,
   Alert,
   Image,
+  ScrollView,
+  StatusBar,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -45,16 +48,23 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.background} />
       {/* Background gradient circles */}
       <View style={styles.backgroundCircle1} />
       <View style={styles.backgroundCircle2} />
       
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
-        <View style={styles.content}>
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.content}>
           {/* Logo/Header */}
           <View style={styles.header}>
             <View style={styles.logoContainer}>
@@ -65,7 +75,6 @@ export default function LoginScreen() {
               />
             </View>
             <Text style={styles.title}>Taxe Mobile</Text>
-            <Text style={styles.subtitle}>Collecte Simplifiée</Text>
           </View>
 
           {/* Form Card */}
@@ -136,9 +145,10 @@ export default function LoginScreen() {
           </View>
 
           <Text style={styles.footer}>Version 1.0.0</Text>
-        </View>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -170,21 +180,27 @@ const styles = StyleSheet.create({
   keyboardView: {
     flex: 1,
   },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+  },
   content: {
     flex: 1,
     justifyContent: 'center',
-    padding: rs.lg,
+    padding: rs.md,
+    paddingTop: hp(4),
+    paddingBottom: rs.lg,
   },
   header: {
     alignItems: 'center',
-    marginBottom: rs.xxl,
-  },
-  logoContainer: {
     marginBottom: rs.lg,
   },
+  logoContainer: {
+    marginBottom: rs.md,
+  },
   logo: {
-    width: scale(120),
-    height: scale(120),
+    width: scale(100),
+    height: scale(100),
     borderRadius: rr.xl,
   },
   title: {
@@ -200,8 +216,8 @@ const styles = StyleSheet.create({
   },
   formCard: {
     backgroundColor: Colors.backgroundCard,
-    borderRadius: rr.xxl,
-    padding: rs.xl,
+    borderRadius: rr.xl,
+    padding: rs.lg,
     borderWidth: 1,
     borderColor: Colors.border,
     ...Shadows.lg,
@@ -215,10 +231,10 @@ const styles = StyleSheet.create({
   instructionText: {
     fontSize: rf.md,
     color: Colors.textSecondary,
-    marginBottom: rs.xl,
+    marginBottom: rs.lg,
   },
   inputContainer: {
-    marginBottom: rs.lg,
+    marginBottom: rs.md,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -265,7 +281,7 @@ const styles = StyleSheet.create({
   footer: {
     textAlign: 'center',
     color: Colors.textMuted,
-    marginTop: rs.xxl,
+    marginTop: rs.lg,
     fontSize: rf.sm,
   },
 });

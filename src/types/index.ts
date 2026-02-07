@@ -61,7 +61,8 @@ export interface LocalTaxCategorie {
 
 export interface TaxType {
   id: number;
-  tax_categorie_id: number;
+  tax_categorie_id: number | null; // Nullable: si null, la taxe est liée directement au service
+  service_id: number | null; // ID du service si taxe directe (sans catégorie)
   label: string;
   amount: number | null;
   min_amount: number | null;
@@ -76,7 +77,8 @@ export interface TaxType {
 
 export interface LocalTaxType {
   tax_type_id: number;
-  tax_categorie_id: number;
+  tax_categorie_id: number | null; // Nullable: si null, la taxe est liée directement au service
+  service_id: number | null; // ID du service si taxe directe (sans catégorie)
   label: string;
   amount: number | null;
   min_amount: number | null;
@@ -114,7 +116,7 @@ export interface LocalPaymentQueue {
   payer_name: string;
   payer_phone: string | null;
   service_id: number;
-  tax_categorie_id: number;
+  tax_categorie_id: number | null; // Nullable pour les taxes sans catégorie
   tax_type_id: number;
   quantity: number;
   unit_price: number;

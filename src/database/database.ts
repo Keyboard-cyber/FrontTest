@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { CREATE_TABLES_SQL, CREATE_INDEXES_SQL } from './schema';
 
-const DB_NAME = 'taxe_agent_v4.db'; // Version 4 - ajout colonne role
+const DB_NAME = 'taxe_agent_v5.db'; // Version 5 - ajout service_id pour taxes directes
 
 let db: any = null;
 
@@ -204,6 +204,17 @@ const runMigrations = async (database: any): Promise<void> => {
       // La colonne existe déjà, ignorer l'erreur
       if (!e.message?.includes('duplicate column')) {
         console.log('Role column already exists or migration skipped');
+      }
+    }
+    
+    // Migration: Ajouter la colonne 'service_id' à local_tax_types pour les taxes directes
+    try {
+      await database.execAsync(`ALTER TABLE local_tax_types ADD COLUMN service_id INTEGER;`);
+      console.log('Migration: Added service_id column to local_tax_types');
+    } catch (e: any) {
+      // La colonne existe déjà, ignorer l'erreur
+      if (!e.message?.includes('duplicate column')) {
+        console.log('service_id column already exists or migration skipped');
       }
     }
   } catch (error) {

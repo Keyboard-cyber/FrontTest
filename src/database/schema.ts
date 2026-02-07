@@ -35,10 +35,11 @@ CREATE TABLE IF NOT EXISTS local_tax_categorie (
   updated_at TEXT NOT NULL
 );
 
--- tax_types
+-- tax_types (tax_categorie_id nullable pour taxes directes depuis service)
 CREATE TABLE IF NOT EXISTS local_tax_types (
   tax_type_id INTEGER PRIMARY KEY,
-  tax_categorie_id INTEGER NOT NULL,
+  tax_categorie_id INTEGER, -- Nullable: si null, la taxe est liée directement au service
+  service_id INTEGER, -- ID du service si taxe directe (sans catégorie)
   label TEXT NOT NULL,
   amount REAL,
   min_amount REAL,
@@ -57,7 +58,7 @@ CREATE TABLE IF NOT EXISTS local_payments_queue (
   payer_name TEXT NOT NULL,
   payer_phone TEXT,
   service_id INTEGER NOT NULL,
-  tax_categorie_id INTEGER NOT NULL,
+  tax_categorie_id INTEGER, -- Nullable pour les taxes directes (sans catégorie)
   tax_type_id INTEGER NOT NULL,
   quantity REAL NOT NULL DEFAULT 1,
   unit_price REAL NOT NULL,
@@ -99,6 +100,7 @@ export const CREATE_INDEXES_SQL = `
 CREATE INDEX IF NOT EXISTS idx_local_tax_categorie_label ON local_tax_categorie(label);
 CREATE INDEX IF NOT EXISTS idx_local_tax_categorie_service ON local_tax_categorie(service_id);
 CREATE INDEX IF NOT EXISTS idx_local_tax_types_cat ON local_tax_types(tax_categorie_id);
+CREATE INDEX IF NOT EXISTS idx_local_tax_types_service ON local_tax_types(service_id);
 CREATE INDEX IF NOT EXISTS idx_local_payments_status ON local_payments_queue(status);
 CREATE INDEX IF NOT EXISTS idx_local_payments_paid_at ON local_payments_queue(paid_at);
 `;

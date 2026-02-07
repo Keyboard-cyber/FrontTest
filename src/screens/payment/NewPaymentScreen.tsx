@@ -17,6 +17,7 @@ import { useAuth, useSync } from '../../contexts';
 import { 
   getTaxCategories, 
   getTaxTypes, 
+  getDirectTaxTypesByService,
   addPaymentToQueue,
   getLocalTerminal,
   getServiceIds,
@@ -33,6 +34,7 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
 
   const [categories, setCategories] = useState<LocalTaxCategorie[]>([]);
   const [taxTypes, setTaxTypes] = useState<LocalTaxType[]>([]);
+  const [directTaxTypes, setDirectTaxTypes] = useState<LocalTaxType[]>([]); // Taxes directes (sans catégorie)
   const [filteredTaxTypes, setFilteredTaxTypes] = useState<LocalTaxType[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -67,6 +69,13 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
       
       const types = await getTaxTypes();
       setTaxTypes(types);
+      
+      // Charger les taxes directes (sans catégorie) pour les services de l'agent
+      if (serviceIds.length > 0) {
+        const directTypes = await getDirectTaxTypesByService(serviceIds);
+        console.log(`${directTypes.length} taxes directes chargées`);
+        setDirectTaxTypes(directTypes);
+      }
     } catch (error) {
       console.error('Erreur chargement données:', error);
       Alert.alert('Erreur', 'Impossible de charger les données');
@@ -80,6 +89,16 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
     const filtered = taxTypes.filter(t => t.tax_categorie_id === category.tax_categorie_id);
     setFilteredTaxTypes(filtered);
     setStep('type');
+  };
+
+  // Sélection d'une taxe directe (sans catégorie)
+  const handleDirectTaxTypeSelect = (taxType: LocalTaxType) => {
+    setSelectedCategory(null); // Pas de catégorie
+    setSelectedTaxType(taxType);
+    if (taxType.amount) {
+      setCustomAmount(taxType.amount.toString());
+    }
+    setStep('details');
   };
 
   const handleTaxTypeSelect = (taxType: LocalTaxType) => {
@@ -136,7 +155,7 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
   };
 
   const handleSubmit = async () => {
-    if (!validateForm() || !profile || !selectedCategory || !selectedTaxType) return;
+    if (!validateForm() || !profile || !selectedTaxType) return;
 
     setIsSaving(true);
     try {
@@ -155,8 +174,8 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
         local_uuid: uuid,
         payer_name: payerName.trim(),
         payer_phone: payerPhone.trim() || null,
-        service_id: profile.service_id,
-        tax_categorie_id: selectedCategory.tax_categorie_id,
+        service_id: selectedTaxType.service_id || profile.service_id,
+        tax_categorie_id: selectedCategory?.tax_categorie_id || null, // Peut être null pour taxe directe
         tax_type_id: selectedTaxType.tax_type_id,
         quantity: qty,
         unit_price: unitPrice,
@@ -245,23 +264,53 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
       case 'category':
         return (
           <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Sélectionnez une catégorie</Text>
-            {categories.length === 0 ? (
+            <Text style={styles.stepTitle}>Sélectionnez une catégorie ou une taxe</Text>
+            
+            {/* Taxes directes (sans catégorie) */}
+            {directTaxTypes.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>Taxes directes</Text>
+                {directTaxTypes.map((type) => (
+                  <TouchableOpacity
+                    key={`direct-${type.tax_type_id}`}
+                    style={[styles.optionCard, styles.directTaxCard]}
+                    onPress={() => handleDirectTaxTypeSelect(type)}
+                  >
+                    <Ionicons name="flash-outline" size={24} color="#e67e22" />
+                    <View style={styles.optionContent}>
+                      <Text style={styles.optionText}>{type.label}</Text>
+                      {type.amount ? (
+                        <Text style={styles.optionAmount}>{formatCurrency(type.amount)}</Text>
+                      ) : null}
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            
+            {/* Catégories */}
+            {categories.length > 0 && (
+              <>
+                <Text style={styles.sectionTitle}>Catégories</Text>
+                {categories.map((cat) => (
+                  <TouchableOpacity
+                    key={cat.tax_categorie_id}
+                    style={styles.optionCard}
+                    onPress={() => handleCategorySelect(cat)}
+                  >
+                    <Ionicons name="folder-outline" size={24} color="#1a73e8" />
+                    <Text style={styles.optionText}>{cat.label}</Text>
+                    <Ionicons name="chevron-forward" size={20} color="#ccc" />
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            
+            {categories.length === 0 && directTaxTypes.length === 0 && (
               <Text style={styles.emptyText}>
-                Aucune catégorie disponible. Synchronisez les données.
+                Aucune catégorie ou taxe disponible. Synchronisez les données.
               </Text>
-            ) : (
-              categories.map((cat) => (
-                <TouchableOpacity
-                  key={cat.tax_categorie_id}
-                  style={styles.optionCard}
-                  onPress={() => handleCategorySelect(cat)}
-                >
-                  <Ionicons name="folder-outline" size={24} color="#1a73e8" />
-                  <Text style={styles.optionText}>{cat.label}</Text>
-                  <Ionicons name="chevron-forward" size={20} color="#ccc" />
-                </TouchableOpacity>
-              ))
             )}
           </View>
         );
@@ -309,7 +358,7 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
             style={{ flex: 1 }}
           >
             <ScrollView style={styles.stepContainer}>
-              <TouchableOpacity style={styles.backButton} onPress={() => setStep('type')}>
+              <TouchableOpacity style={styles.backButton} onPress={() => setStep(selectedCategory ? 'type' : 'category')}>
                 <Ionicons name="arrow-back" size={24} color="#1a73e8" />
                 <Text style={styles.backText}>Retour</Text>
               </TouchableOpacity>
@@ -416,10 +465,12 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
             <Text style={styles.stepSubtitle}>Vérifiez les informations</Text>
 
             <View style={styles.summaryCard}>
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Catégorie</Text>
-                <Text style={styles.summaryValue}>{selectedCategory?.label}</Text>
-              </View>
+              {selectedCategory && (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Catégorie</Text>
+                  <Text style={styles.summaryValue}>{selectedCategory.label}</Text>
+                </View>
+              )}
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Type de taxe</Text>
                 <Text style={styles.summaryValue}>{selectedTaxType?.label}</Text>
@@ -715,5 +766,18 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#1a73e8',
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+    textTransform: 'uppercase',
+    marginTop: 15,
+    marginBottom: 10,
+    letterSpacing: 1,
+  },
+  directTaxCard: {
+    borderLeftWidth: 4,
+    borderLeftColor: '#e67e22',
   },
 });

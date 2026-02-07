@@ -84,6 +84,7 @@ class SyncService {
       const localTypes: LocalTaxType[] = types.map((type: TaxType) => ({
         tax_type_id: type.id,
         tax_categorie_id: type.tax_categorie_id,
+        service_id: type.service_id,
         label: type.label,
         amount: type.amount,
         min_amount: type.min_amount,

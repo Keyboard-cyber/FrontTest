@@ -37,11 +37,12 @@ export const HistoryScreen: React.FC<Props> = ({ navigation }) => {
       // Enrichir avec les labels
       const enrichedPayments = await Promise.all(
         allPayments.map(async (p) => {
-          const category = await getTaxCategorieById(p.tax_categorie_id);
+          // Récupérer la catégorie seulement si tax_categorie_id n'est pas null
+          const category = p.tax_categorie_id ? await getTaxCategorieById(p.tax_categorie_id) : null;
           const type = await getTaxTypeById(p.tax_type_id);
           return {
             ...p,
-            categoryLabel: category?.label || 'N/A',
+            categoryLabel: category?.label || 'Taxe directe',
             typeLabel: type?.label || 'N/A',
           };
         })
@@ -322,6 +323,7 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 15,
     paddingTop: 5,
+    paddingBottom: 100, // Espace pour la barre de navigation Android
   },
   paymentCard: {
     backgroundColor: '#fff',

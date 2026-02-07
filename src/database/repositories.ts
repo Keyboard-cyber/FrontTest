@@ -149,10 +149,10 @@ export const saveTaxTypes = async (types: LocalTaxType[]): Promise<void> => {
   // Insérer les nouveaux
   for (const type of types) {
     await db.runAsync(
-      `INSERT INTO local_tax_types (tax_type_id, tax_categorie_id, label, amount, min_amount, max_amount, 
+      `INSERT INTO local_tax_types (tax_type_id, tax_categorie_id, service_id, label, amount, min_amount, max_amount, 
        require_chassis_number, require_color, sort_order, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [type.tax_type_id, type.tax_categorie_id, type.label, type.amount, type.min_amount, type.max_amount,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [type.tax_type_id, type.tax_categorie_id, type.service_id, type.label, type.amount, type.min_amount, type.max_amount,
        type.require_chassis_number, type.require_color, type.sort_order, type.is_active, type.created_at, type.updated_at]
     );
   }
@@ -170,6 +170,24 @@ export const getTaxTypes = async (categorieId?: number): Promise<LocalTaxType[]>
   
   return await db.getAllAsync(
     'SELECT * FROM local_tax_types WHERE is_active = 1 ORDER BY sort_order, label'
+  ) as LocalTaxType[];
+};
+
+// Récupérer les taxes directes par service (sans catégorie)
+export const getDirectTaxTypesByService = async (serviceIds: number | number[]): Promise<LocalTaxType[]> => {
+  const db = await getDatabase();
+  const ids = Array.isArray(serviceIds) ? serviceIds : [serviceIds];
+  
+  if (ids.length === 0) return [];
+  
+  const placeholders = ids.map(() => '?').join(',');
+  return await db.getAllAsync(
+    `SELECT * FROM local_tax_types 
+     WHERE service_id IN (${placeholders}) 
+     AND (tax_categorie_id IS NULL OR tax_categorie_id = 0)
+     AND is_active = 1 
+     ORDER BY sort_order, label`,
+    ids
   ) as LocalTaxType[];
 };
 

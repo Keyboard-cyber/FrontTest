@@ -38,11 +38,12 @@ export const ReceiptScreen: React.FC<Props> = ({ route, navigation }) => {
     try {
       const p = await getPaymentByUuid(paymentUuid);
       if (p) {
-        const category = await getTaxCategorieById(p.tax_categorie_id);
+        // Récupérer la catégorie seulement si tax_categorie_id n'est pas null
+        const category = p.tax_categorie_id ? await getTaxCategorieById(p.tax_categorie_id) : null;
         const type = await getTaxTypeById(p.tax_type_id);
         setPayment({
           ...p,
-          categoryLabel: category?.label || 'N/A',
+          categoryLabel: category?.label || 'Taxe directe',
           typeLabel: type?.label || 'N/A',
         });
       }

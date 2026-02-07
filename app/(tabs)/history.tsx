@@ -67,7 +67,7 @@ export default function HistoryScreen() {
       const mapped = await Promise.all(
         data.map(async (item) => {
           const [categorie, taxType] = await Promise.all([
-            getTaxCategorieById(item.tax_categorie_id),
+            item.tax_categorie_id ? getTaxCategorieById(item.tax_categorie_id) : null,
             getTaxTypeById(item.tax_type_id),
           ]);
           
@@ -76,7 +76,7 @@ export default function HistoryScreen() {
             uuid: item.local_uuid,
             sync_status: item.status.toLowerCase(),
             tax_type_label: taxType?.label || 'Type inconnu',
-            tax_categorie_label: categorie?.label || 'Catégorie inconnue',
+            tax_categorie_label: categorie?.label || 'Taxe directe',
           };
         })
       );
@@ -254,7 +254,7 @@ export default function HistoryScreen() {
     try {
       // Récupérer les noms de catégorie et type depuis la base
       const [categorie, taxType] = await Promise.all([
-        getTaxCategorieById(payment.tax_categorie_id),
+        payment.tax_categorie_id ? getTaxCategorieById(payment.tax_categorie_id) : null,
         getTaxTypeById(payment.tax_type_id),
       ]);
 
@@ -521,7 +521,7 @@ export default function HistoryScreen() {
         ListHeaderComponent={renderListHeader}
         ListEmptyComponent={renderEmptyList}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1976D2']} />}
-        contentContainerStyle={filteredSections.length === 0 ? styles.emptyListContent : undefined}
+        contentContainerStyle={filteredSections.length === 0 ? styles.emptyListContent : styles.listContent}
         stickySectionHeadersEnabled={false}
         showsVerticalScrollIndicator={false}
       />
@@ -792,6 +792,9 @@ const styles = StyleSheet.create({
   },
   emptyListContent: {
     flexGrow: 1,
+  },
+  listContent: {
+    paddingBottom: 100, // Espace pour la barre de navigation Android
   },
   emptyText: {
     fontSize: 18,

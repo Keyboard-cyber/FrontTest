@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<'agent' | 'controleur' | null>(null);
-  const tokenCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const tokenCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fonction pour gérer la déconnexion silencieuse (token expiré)
   const handleTokenExpired = async () => {
@@ -379,7 +379,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Rôle non autorisé (admin, superadmin, etc.)
         console.error('Rôle non autorisé:', detectedRole);
         apiService.clearToken();
-        return { success: false, error: `Ce rôle n'est pas autorisé pour l'application mobile (votre rôle: ${userData.role})` };
+        return { success: false, error: `Vous n'êtes pas autorisé à utiliser cette application` };
       }
       
       // 4. Récupérer toutes les données initiales de l'agent

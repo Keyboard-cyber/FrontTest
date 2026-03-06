@@ -243,15 +243,27 @@ export const updatePaymentStatus = async (
   uuid: string, 
   status: 'PENDING' | 'SYNCED' | 'FAILED',
   serverReceiptNo?: string,
-  serverPaymentId?: number
+  serverPaymentId?: number,
+  serverQrSignature?: string
 ): Promise<void> => {
   const db = await getDatabase();
-  await db.runAsync(
-    `UPDATE local_payments_queue 
-     SET status = ?, server_receipt_no = ?, server_payment_id = ?
-     WHERE local_uuid = ?`,
-    [status, serverReceiptNo || null, serverPaymentId || null, uuid]
-  );
+  
+  if (serverQrSignature) {
+    // Met à jour avec la signature QR du serveur
+    await db.runAsync(
+      `UPDATE local_payments_queue 
+       SET status = ?, server_receipt_no = ?, server_payment_id = ?, qr_signature = ?
+       WHERE local_uuid = ?`,
+      [status, serverReceiptNo || null, serverPaymentId || null, serverQrSignature, uuid]
+    );
+  } else {
+    await db.runAsync(
+      `UPDATE local_payments_queue 
+       SET status = ?, server_receipt_no = ?, server_payment_id = ?
+       WHERE local_uuid = ?`,
+      [status, serverReceiptNo || null, serverPaymentId || null, uuid]
+    );
+  }
 };
 
 export const getTodayPaymentsStats = async (userId: number): Promise<{ count: number; total: number }> => {

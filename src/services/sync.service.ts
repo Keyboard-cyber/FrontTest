@@ -171,11 +171,13 @@ class SyncService {
           
           const serverPayment = await apiService.createPayment(paymentData);
 
+          // Met à jour le statut avec la signature QR du serveur
           await updatePaymentStatus(
             payment.local_uuid,
             'SYNCED',
             serverPayment.receipt_no,
-            serverPayment.id
+            serverPayment.id,
+            serverPayment.qr_signature // Signature officielle du serveur
           );
           result.synced++;
         } catch (error: any) {
@@ -203,7 +205,8 @@ class SyncService {
               payment.local_uuid,
               'SYNCED',
               existingPayment.receipt_no,
-              existingPayment.id
+              existingPayment.id,
+              existingPayment.qr_signature // Signature officielle du serveur
             );
             result.synced++;
           } else {

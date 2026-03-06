@@ -50,7 +50,7 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
   const [vehicleColor, setVehicleColor] = useState('');
 
   // Étape du formulaire
-  const [step, setStep] = useState<'category' | 'type' | 'details' | 'confirm'>('category');
+  const [step, setStep] = useState<'category' | 'directTypes' | 'type' | 'details' | 'confirm'>('category');
 
   useEffect(() => {
     loadData();
@@ -264,54 +264,72 @@ export const NewPaymentScreen: React.FC<Props> = ({ navigation }) => {
       case 'category':
         return (
           <View style={styles.stepContainer}>
-            <Text style={styles.stepTitle}>Sélectionnez une catégorie ou une taxe</Text>
+            <Text style={styles.stepTitle}>Sélectionnez une catégorie</Text>
             
-            {/* Taxes directes (sans catégorie) */}
+            {/* Taxes liées directement au service (sans catégorie) */}
             {directTaxTypes.length > 0 && (
-              <>
-                <Text style={styles.sectionTitle}>Taxes directes</Text>
-                {directTaxTypes.map((type) => (
-                  <TouchableOpacity
-                    key={`direct-${type.tax_type_id}`}
-                    style={[styles.optionCard, styles.directTaxCard]}
-                    onPress={() => handleDirectTaxTypeSelect(type)}
-                  >
-                    <Ionicons name="flash-outline" size={24} color="#e67e22" />
-                    <View style={styles.optionContent}>
-                      <Text style={styles.optionText}>{type.label}</Text>
-                      {type.amount ? (
-                        <Text style={styles.optionAmount}>{formatCurrency(type.amount)}</Text>
-                      ) : null}
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color="#ccc" />
-                  </TouchableOpacity>
-                ))}
-              </>
+              <TouchableOpacity
+                style={[styles.optionCard, styles.serviceDirectCard]}
+                onPress={() => setStep('directTypes')}
+              >
+                <View style={styles.serviceIconContainer}>
+                  <Ionicons name="pricetag" size={24} color="#fff" />
+                </View>
+                <View style={styles.optionContent}>
+                  <Text style={styles.optionText}>Taxes du service</Text>
+                  <Text style={styles.optionSubtext}>{directTaxTypes.length} taxe(s) disponible(s)</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#e67e22" />
+              </TouchableOpacity>
             )}
             
-            {/* Catégories */}
-            {categories.length > 0 && (
-              <>
-                <Text style={styles.sectionTitle}>Catégories</Text>
-                {categories.map((cat) => (
-                  <TouchableOpacity
-                    key={cat.tax_categorie_id}
-                    style={styles.optionCard}
-                    onPress={() => handleCategorySelect(cat)}
-                  >
-                    <Ionicons name="folder-outline" size={24} color="#1a73e8" />
-                    <Text style={styles.optionText}>{cat.label}</Text>
-                    <Ionicons name="chevron-forward" size={20} color="#ccc" />
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
+            {/* Catégories de taxes */}
+            {categories.map((cat) => (
+              <TouchableOpacity
+                key={cat.tax_categorie_id}
+                style={styles.optionCard}
+                onPress={() => handleCategorySelect(cat)}
+              >
+                <Ionicons name="folder-outline" size={24} color="#1a73e8" />
+                <Text style={styles.optionText}>{cat.label}</Text>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+            ))}
             
             {categories.length === 0 && directTaxTypes.length === 0 && (
               <Text style={styles.emptyText}>
                 Aucune catégorie ou taxe disponible. Synchronisez les données.
               </Text>
             )}
+          </View>
+        );
+
+      case 'directTypes':
+        return (
+          <View style={styles.stepContainer}>
+            <TouchableOpacity style={styles.backButton} onPress={() => setStep('category')}>
+              <Ionicons name="arrow-back" size={24} color="#1a73e8" />
+              <Text style={styles.backText}>Retour</Text>
+            </TouchableOpacity>
+            <Text style={styles.stepTitle}>Taxes du service</Text>
+            <Text style={styles.stepSubtitle}>Sélectionnez le type de taxe</Text>
+            
+            {directTaxTypes.map((type) => (
+              <TouchableOpacity
+                key={`direct-${type.tax_type_id}`}
+                style={[styles.optionCard, styles.directTaxCard]}
+                onPress={() => handleDirectTaxTypeSelect(type)}
+              >
+                <Ionicons name="pricetag" size={24} color="#e67e22" />
+                <View style={styles.optionContent}>
+                  <Text style={styles.optionText}>{type.label}</Text>
+                  {type.amount ? (
+                    <Text style={styles.optionAmount}>{formatCurrency(type.amount)}</Text>
+                  ) : null}
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#ccc" />
+              </TouchableOpacity>
+            ))}
           </View>
         );
 
@@ -779,5 +797,22 @@ const styles = StyleSheet.create({
   directTaxCard: {
     borderLeftWidth: 4,
     borderLeftColor: '#e67e22',
+  },
+  serviceDirectCard: {
+    backgroundColor: '#fff5eb',
+    borderWidth: 2,
+    borderColor: '#e67e22',
+    marginBottom: 20,
+  },
+  serviceIconContainer: {
+    backgroundColor: '#e67e22',
+    borderRadius: 8,
+    padding: 8,
+    marginRight: 12,
+  },
+  optionSubtext: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 2,
   },
 });

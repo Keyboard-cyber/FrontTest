@@ -1,12 +1,10 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { LocalProfile, User, LoginCredentials, LocalTaxCategorie, LocalTaxType, LocalTerminal } from '../types';
 import { 
   initializeDatabase, 
   getLocalProfile, 
   saveLocalProfile, 
   clearLocalProfile,
-  clearAllData,
-  clearAuthData,
   saveTaxCategories,
   saveTaxTypes,
   saveLocalTerminal,
@@ -16,7 +14,9 @@ import {
   getLocalTerminal,
 } from '../database';
 import { apiService, syncService } from '../services';
+import { isTokenExpired, getTokenRemainingTime } from '../utils/token';
 import * as Network from 'expo-network';
+import { router } from 'expo-router';
 
 interface AuthContextType {
   isLoading: boolean;
@@ -43,18 +43,21 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+// Intervalle de vérification du token en millisecondes (5 minutes)
+const TOKEN_CHECK_INTERVAL = 5 * 60 * 1000;
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<'agent' | 'controleur' | null>(null);
+  const tokenCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fonction pour gérer la déconnexion silencieuse (token expiré)
   const handleTokenExpired = async () => {
     console.log('🔒 Token expiré - Déconnexion automatique');
-    // Nettoyer seulement les données d'auth, conserver les paiements
-    await clearAuthData();
+    // Réinitialiser l'état d'authentification (conserver toutes les données locales)
     setProfile(null);
     setUser(null);
     setUserRole(null);
@@ -64,12 +67,87 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Fonction pour gérer la déconnexion quand l'utilisateur est bloqué
   const handleUserBlocked = async (reason?: string) => {
     console.log('🚫 Utilisateur bloqué - Déconnexion automatique:', reason);
-    // Nettoyer toutes les données et déconnecter
-    await clearAllData();
+    // Réinitialiser l'état d'authentification (conserver toutes les données locales)
     setProfile(null);
     setUser(null);
     setUserRole(null);
     setIsAuthenticated(false);
+  };
+
+  /**
+   * Vérifie si le token est valide.
+   * Si le token est expiré et que l'utilisateur est en ligne, on le déconnecte et redirige vers la page de connexion.
+   * Si l'utilisateur est hors ligne, on le laisse continuer en mode offline.
+   */
+  const checkTokenValidity = async (): Promise<boolean> => {
+    try {
+      const localProfile = await getLocalProfile();
+      
+      // Pas de profil = pas de token à vérifier
+      if (!localProfile || !localProfile.token) {
+        console.log('⚠️ Aucun token à vérifier');
+        return true; // Laisser passer (login requis ailleurs)
+      }
+
+      // Vérifier si le token est expiré (avec 60s de marge)
+      const expired = isTokenExpired(localProfile.token, 60);
+
+      if (!expired) {
+        // Token valide
+        const remaining = getTokenRemainingTime(localProfile.token);
+        console.log(`✅ Token valide - Expire dans ${Math.floor(remaining / 60)} minutes`);
+        return true;
+      }
+
+      // Token expiré - vérifier si l'utilisateur est en ligne
+      console.log('⏰ Token expiré - Vérification de la connexion réseau...');
+      const netState = await Network.getNetworkStateAsync();
+      const isOnline = netState.isConnected && netState.isInternetReachable;
+
+      if (isOnline) {
+        // En ligne avec token expiré -> redirection vers connexion (sans supprimer les données)
+        console.log('🌐 En ligne avec token expiré - Redirection vers la connexion');
+        
+        // Réinitialiser l'état d'authentification (conserver toutes les données locales)
+        setProfile(null);
+        setUser(null);
+        setUserRole(null);
+        setIsAuthenticated(false);
+        
+        // Rediriger vers la page de connexion
+        router.replace('/login');
+        return false;
+      } else {
+        // Hors ligne avec token expiré -> laisser continuer en mode offline
+        console.log('📴 Hors ligne avec token expiré - Mode offline autorisé');
+        return true;
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors de la vérification du token:', error);
+      return true; // En cas d'erreur, laisser passer
+    }
+  };
+
+  // Démarrer la vérification périodique du token
+  const startTokenValidityCheck = () => {
+    // Nettoyer l'intervalle précédent si existant
+    if (tokenCheckIntervalRef.current) {
+      clearInterval(tokenCheckIntervalRef.current);
+    }
+
+    // Vérifier le token toutes les 5 minutes
+    tokenCheckIntervalRef.current = setInterval(async () => {
+      console.log('🔄 Vérification périodique du token...');
+      await checkTokenValidity();
+    }, TOKEN_CHECK_INTERVAL);
+  };
+
+  // Arrêter la vérification périodique
+  const stopTokenValidityCheck = () => {
+    if (tokenCheckIntervalRef.current) {
+      clearInterval(tokenCheckIntervalRef.current);
+      tokenCheckIntervalRef.current = null;
+    }
   };
 
   // Initialiser l'application
@@ -94,8 +172,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           
           // Charger le token dans le service API
           if (localProfile.token) {
+            // Vérifier d'abord si le token est valide
+            const isValid = await checkTokenValidity();
+            if (!isValid) {
+              // Token expiré et utilisateur en ligne - arrêter l'init
+              setIsLoading(false);
+              return;
+            }
+            
             apiService.setToken(localProfile.token);
             console.log('✅ Token restauré depuis le profil local');
+            
+            // Démarrer la vérification périodique
+            startTokenValidityCheck();
           }
           
           // Essayer de récupérer les infos utilisateur à jour et le rôle
@@ -136,6 +225,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     init();
+
+    // Cleanup: arrêter la vérification périodique au démontage
+    return () => {
+      stopTokenValidityCheck();
+    };
   }, []);
 
   // Fonction de login offline (après déconnexion, sans internet)
@@ -374,14 +468,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log('Types de taxes bruts:', JSON.stringify(initialData.taxTypes[0], null, 2));
         const localTypes: LocalTaxType[] = initialData.taxTypes.map(type => ({
           tax_type_id: type.id,
-          tax_categorie_id: type.tax_categorie_id || (type as any).categorie_id || (type as any).category_id,
+          tax_categorie_id: type.tax_categorie_id ?? null,
+          service_id: type.service_id ?? null,
           label: type.label || (type as any).name || (type as any).title || '',
-          amount: type.amount || (type as any).price || (type as any).default_amount || 0,
-          min_amount: type.min_amount || (type as any).minimum_amount || null,
-          max_amount: type.max_amount || (type as any).maximum_amount || null,
+          amount: type.amount ?? null,
+          min_amount: type.min_amount ?? null,
+          max_amount: type.max_amount ?? null,
           require_chassis_number: type.require_chassis_number ? 1 : 0,
           require_color: type.require_color ? 1 : 0,
-          sort_order: type.sort_order || (type as any).order || 0,
+          sort_order: type.sort_order || 0,
           is_active: type.is_active ? 1 : 0,
           created_at: type.created_at || new Date().toISOString(),
           updated_at: type.updated_at || new Date().toISOString(),
@@ -421,6 +516,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       setIsLoading(true);
       
+      // Arrêter la vérification périodique du token
+      stopTokenValidityCheck();
+      
       // Essayer de déconnecter côté serveur
       try {
         await apiService.logout();
@@ -428,9 +526,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Ignorer les erreurs de déconnexion serveur
       }
       
-      // Nettoyer les données locales
-      await clearAllData();
-      
+      // Réinitialiser l'état d'authentification (conserver toutes les données locales)
+      // Les paiements, taxes, et credentials offline sont conservés
       setProfile(null);
       setUser(null);
       setUserRole(null);

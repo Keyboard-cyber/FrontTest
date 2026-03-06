@@ -1,6 +1,6 @@
 // Configuration API
 export const API_CONFIG = {
-  BASE_URL: 'https://taxe-api.bgbd.org/api',
+  BASE_URL: 'https://api.smarttaxe.com/api',
   TIMEOUT: 30000,
 };
 

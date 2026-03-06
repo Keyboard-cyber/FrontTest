@@ -24,6 +24,38 @@ class ApiService {
   private onUnauthorizedCallback: UnauthorizedCallback | null = null;
   private onUserBlockedCallback: UserBlockedCallback | null = null;
 
+  /**
+   * Récupère toutes les données d'un endpoint paginé (sans limite de page)
+   */
+  private async fetchAllPages<T>(endpoint: string, params: Record<string, string> = {}): Promise<T[]> {
+    let allItems: T[] = [];
+    let currentPage = 1;
+    let lastPage = 1;
+
+    do {
+      const queryParams = new URLSearchParams({ ...params, page: String(currentPage), per_page: '200' });
+      const url = `${endpoint}?${queryParams.toString()}`;
+
+      const response = await this.api.get<any>(url);
+      const responseData = response.data;
+
+      const items: T[] = responseData.data || responseData || [];
+      allItems.push(...items);
+
+      if (responseData.meta?.last_page) {
+        lastPage = responseData.meta.last_page;
+      } else if (responseData.last_page) {
+        lastPage = responseData.last_page;
+      } else {
+        break;
+      }
+
+      currentPage++;
+    } while (currentPage <= lastPage);
+
+    return allItems;
+  }
+
   constructor() {
     this.api = axios.create({
       baseURL: API_CONFIG.BASE_URL,
@@ -249,22 +281,22 @@ class ApiService {
     if (serviceIds.length > 0) {
       console.log(`🔍 Téléchargement des catégories pour ${serviceIds.length} service(s): [${serviceIds.join(', ')}]`);
       
-      // Essayer d'abord avec un paramètre multiple
+      // Récupérer TOUTES les catégories (sans pagination)
       try {
-        const categoriesResponse = await this.api.get<{ data: TaxCategorie[] }>(
-          `${ENDPOINTS.TAX_CATEGORIES}?service_ids=${serviceIds.join(',')}`
+        taxCategories = await this.fetchAllPages<TaxCategorie>(
+          ENDPOINTS.TAX_CATEGORIES,
+          { service_ids: serviceIds.join(',') }
         );
-        taxCategories = categoriesResponse.data.data || categoriesResponse.data || [];
-        console.log(`✅ ${taxCategories.length} catégories récupérées via service_ids`);
+        console.log(`✅ ${taxCategories.length} catégories récupérées (toutes pages)`);
       } catch (e) {
-        // Si ça ne marche pas, récupérer service par service
+        // Fallback: récupérer service par service
         console.log('📥 Récupération des catégories service par service...');
         for (const serviceId of serviceIds) {
           try {
-            const response = await this.api.get<{ data: TaxCategorie[] }>(
-              `${ENDPOINTS.TAX_CATEGORIES}?service_id=${serviceId}`
+            const cats = await this.fetchAllPages<TaxCategorie>(
+              ENDPOINTS.TAX_CATEGORIES,
+              { service_id: String(serviceId) }
             );
-            const cats = response.data.data || response.data || [];
             console.log(`  ✅ Service ${serviceId}: ${cats.length} catégorie(s)`);
             taxCategories.push(...cats);
           } catch (err) {
@@ -280,23 +312,23 @@ class ApiService {
         console.log(`🔒 Filtrage: ${beforeFilter} → ${taxCategories.length} catégories (services autorisés uniquement)`);
       }
       
-      // Récupérer les types de taxes pour tous les services
+      // Récupérer TOUS les types de taxes (sans pagination)
       console.log(`🔍 Téléchargement des types de taxes...`);
       try {
-        const typesResponse = await this.api.get<{ data: TaxType[] }>(
-          `${ENDPOINTS.TAX_TYPES}?service_ids=${serviceIds.join(',')}`
+        taxTypes = await this.fetchAllPages<TaxType>(
+          ENDPOINTS.TAX_TYPES,
+          { service_ids: serviceIds.join(',') }
         );
-        taxTypes = typesResponse.data.data || typesResponse.data || [];
-        console.log(`✅ ${taxTypes.length} types de taxes récupérés via service_ids`);
+        console.log(`✅ ${taxTypes.length} types de taxes récupérés (toutes pages)`);
       } catch (e) {
-        // Si ça ne marche pas, récupérer service par service
+        // Fallback: récupérer service par service
         console.log('📥 Récupération des types de taxes service par service...');
         for (const serviceId of serviceIds) {
           try {
-            const response = await this.api.get<{ data: TaxType[] }>(
-              `${ENDPOINTS.TAX_TYPES}?service_id=${serviceId}`
+            const types = await this.fetchAllPages<TaxType>(
+              ENDPOINTS.TAX_TYPES,
+              { service_id: String(serviceId) }
             );
-            const types = response.data.data || response.data || [];
             console.log(`  ✅ Service ${serviceId}: ${types.length} type(s)`);
             taxTypes.push(...types);
           } catch (err) {
@@ -305,12 +337,22 @@ class ApiService {
         }
       }
       
-      // Filtrer les types pour ne garder que ceux des catégories valides
+      // Filtrer les types: catégories valides OU liés directement au service
       const validCategoryIds = taxCategories.map(c => c.id);
       const beforeTypeFilter = taxTypes.length;
-      taxTypes = taxTypes.filter(type => validCategoryIds.includes(type.tax_categorie_id));
+      taxTypes = taxTypes.filter(type => {
+        // Type lié à une catégorie valide
+        if (type.tax_categorie_id !== null && type.tax_categorie_id !== 0) {
+          return validCategoryIds.includes(type.tax_categorie_id);
+        }
+        // Type lié directement au service (sans catégorie)
+        if (type.service_id !== null) {
+          return serviceIds.includes(type.service_id);
+        }
+        return false;
+      });
       if (beforeTypeFilter !== taxTypes.length) {
-        console.log(`🔒 Filtrage types: ${beforeTypeFilter} → ${taxTypes.length} (catégories autorisées uniquement)`);
+        console.log(`🔒 Filtrage types: ${beforeTypeFilter} → ${taxTypes.length} (catégories + services directs)`);
       }
     } else {
       console.log('⚠️ Aucun service trouvé pour l\'agent - aucune catégorie téléchargée');
@@ -330,15 +372,13 @@ class ApiService {
   // ==================== TAX CATEGORIES ====================
 
   async getTaxCategories(): Promise<TaxCategorie[]> {
-    const response = await this.api.get<{ data: TaxCategorie[] }>(ENDPOINTS.TAX_CATEGORIES);
-    return response.data.data;
+    return this.fetchAllPages<TaxCategorie>(ENDPOINTS.TAX_CATEGORIES);
   }
 
   // ==================== TAX TYPES ====================
 
   async getTaxTypes(): Promise<TaxType[]> {
-    const response = await this.api.get<{ data: TaxType[] }>(ENDPOINTS.TAX_TYPES);
-    return response.data.data;
+    return this.fetchAllPages<TaxType>(ENDPOINTS.TAX_TYPES);
   }
 
   // ==================== PAYMENTS ====================

@@ -72,6 +72,9 @@ CREATE TABLE IF NOT EXISTS local_payments_queue (
   status TEXT NOT NULL,
   server_receipt_no TEXT,
   server_payment_id INTEGER,
+  installment_number INTEGER,     -- Numéro de cette tranche (1, 2, 3...)
+  installment_total INTEGER,      -- Nombre total de tranches prévues
+  installment_group_id TEXT,      -- UUID commun à toutes les tranches d'un même paiement
   created_at TEXT NOT NULL
 );
 
@@ -103,6 +106,7 @@ CREATE INDEX IF NOT EXISTS idx_local_tax_types_cat ON local_tax_types(tax_catego
 CREATE INDEX IF NOT EXISTS idx_local_tax_types_service ON local_tax_types(service_id);
 CREATE INDEX IF NOT EXISTS idx_local_payments_status ON local_payments_queue(status);
 CREATE INDEX IF NOT EXISTS idx_local_payments_paid_at ON local_payments_queue(paid_at);
+CREATE INDEX IF NOT EXISTS idx_local_payments_installment_group ON local_payments_queue(installment_group_id);
 `;
 
 export const DROP_TABLES_SQL = `

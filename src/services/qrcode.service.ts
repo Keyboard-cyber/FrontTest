@@ -49,6 +49,12 @@ export interface QRPaymentData {
   tm: number;
   /** Statut sync: 0=PENDING, 1=SYNCED, 2=FAILED */
   st: number;
+  /** Numéro de tranche (1, 2, 3...) */
+  in?: number;
+  /** Nombre total de tranches */
+  it?: number;
+  /** UUID du groupe de tranches */
+  ig?: string;
   /** Signature HMAC pour vérification */
   sg: string;
 }
@@ -134,6 +140,9 @@ class QRCodeService {
     if (payment.tax_categorie_id) data.tc = payment.tax_categorie_id;
     if (payment.chassis_number) data.cn = payment.chassis_number;
     if (payment.vehicle_color) data.vc = payment.vehicle_color;
+    if (payment.installment_number) data.in = payment.installment_number;
+    if (payment.installment_total) data.it = payment.installment_total;
+    if (payment.installment_group_id) data.ig = payment.installment_group_id;
 
     // Ajouter la signature
     const signature = includeSignature ? this.generateSignature(data) : '';

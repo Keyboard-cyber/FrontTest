@@ -1,7 +1,7 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { API_CONFIG, ENDPOINTS } from '../config/api';
 import { getLocalProfile } from '../database';
-import { AuthResponse, LoginCredentials, TaxCategorie, TaxType, Payment, User, Terminal } from '../types';
+import { AuthResponse, LoginCredentials, TaxCategorie, TaxType, Payment, User, Terminal, Tranche } from '../types';
 
 // Interface pour les données initiales de l'agent
 export interface AgentInitialData {
@@ -446,6 +446,27 @@ class ApiService {
 
   async createSyncLog(log: { terminal_id: number; action: string; payload?: object; status: string; error_message?: string }): Promise<void> {
     await this.api.post(ENDPOINTS.SYNC_LOGS, log);
+  }
+  // ==================== TRANCHES ====================
+
+  async createTranche(data: object): Promise<Tranche> {
+    const response = await this.api.post<{ data: Tranche }>(ENDPOINTS.TRANCHES, data);
+    return response.data.data;
+  }
+
+  async getTranche(id: number): Promise<Tranche> {
+    const response = await this.api.get<{ data: Tranche }>(`${ENDPOINTS.TRANCHES}/${id}`);
+    return response.data.data;
+  }
+
+  async payTranche(trancheId: number, data: object): Promise<Payment> {
+    const response = await this.api.post<{ data: Payment }>(ENDPOINTS.TRANCHE_PAY(trancheId), data);
+    return response.data.data;
+  }
+
+  async syncTranches(data: object): Promise<any> {
+    const response = await this.api.post<{ data: any }>(ENDPOINTS.TRANCHES_SYNC, data);
+    return response.data.data || response.data;
   }
 
   // ==================== UTILITIES ====================

@@ -47,6 +47,12 @@ export default function NewPaymentScreen() {
   const [customAmount, setCustomAmount] = useState('');
   const [chassisNumber, setChassisNumber] = useState('');
   const [vehicleColor, setVehicleColor] = useState('');
+  
+  // Paiement par tranche
+  const [isInstallment, setIsInstallment] = useState(false);
+  const [installmentTotal, setInstallmentTotal] = useState(2);
+  const [installmentNumber, setInstallmentNumber] = useState(1);
+  const [installmentAmount, setInstallmentAmount] = useState('');
 
   // Étape du formulaire
   const [step, setStep] = useState<'category' | 'type' | 'details' | 'confirm'>('category');
@@ -90,6 +96,9 @@ export default function NewPaymentScreen() {
   };
 
   const calculateTotal = (): number => {
+    if (isInstallment && installmentAmount) {
+      return parseFloat(installmentAmount) || 0;
+    }
     const amount = parseFloat(customAmount) || 0;
     return amount;
   };
@@ -130,6 +139,18 @@ export default function NewPaymentScreen() {
       return false;
     }
 
+    if (isInstallment) {
+      const trancheAmount = parseFloat(installmentAmount);
+      if (isNaN(trancheAmount) || trancheAmount <= 0) {
+        Alert.alert('Erreur', 'Veuillez entrer le montant de la tranche');
+        return false;
+      }
+      if (trancheAmount >= parseFloat(customAmount)) {
+        Alert.alert('Erreur', 'Le montant de la tranche doit être inférieur au montant total');
+        return false;
+      }
+    }
+
     return true;
   };
 
@@ -138,13 +159,17 @@ export default function NewPaymentScreen() {
 
     setIsSaving(true);
     try {
-      const uuid = uuidv4();
       const now = new Date().toISOString();
-      const unitPrice = parseFloat(customAmount);
+      const fullAmount = parseFloat(customAmount);
+      const unitPrice = isInstallment ? parseFloat(installmentAmount) : fullAmount;
       
       const terminal = await getLocalTerminal();
       const terminalId = terminal?.terminal_id || 1;
 
+      // Générer un group_id commun si paiement par tranche
+      const installmentGroupId = isInstallment ? uuidv4() : null;
+
+      const uuid = uuidv4();
       const payment: LocalPaymentQueue = {
         local_uuid: uuid,
         payer_name: payerName.trim(),
@@ -164,6 +189,9 @@ export default function NewPaymentScreen() {
         status: 'PENDING',
         server_receipt_no: null,
         server_payment_id: null,
+        installment_number: isInstallment ? installmentNumber : null,
+        installment_total: isInstallment ? installmentTotal : null,
+        installment_group_id: installmentGroupId,
         created_at: now,
       };
 
@@ -230,6 +258,10 @@ export default function NewPaymentScreen() {
     setCustomAmount('');
     setChassisNumber('');
     setVehicleColor('');
+    setIsInstallment(false);
+    setInstallmentTotal(2);
+    setInstallmentNumber(1);
+    setInstallmentAmount('');
     setStep('category');
   };
 
@@ -418,8 +450,98 @@ export default function NewPaymentScreen() {
                 </View>
               </View>
 
+              {/* Option paiement par tranche */}
+              <View style={styles.installmentSection}>
+                <TouchableOpacity 
+                  style={styles.installmentToggle}
+                  onPress={() => setIsInstallment(!isInstallment)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.installmentToggleLeft}>
+                    <Ionicons 
+                      name={isInstallment ? 'checkbox' : 'square-outline'} 
+                      size={22} 
+                      color={isInstallment ? Colors.primary : Colors.textMuted} 
+                    />
+                    <Text style={styles.installmentToggleText}>Paiement par tranche</Text>
+                  </View>
+                  <Ionicons 
+                    name="layers-outline" 
+                    size={20} 
+                    color={isInstallment ? Colors.primary : Colors.textMuted} 
+                  />
+                </TouchableOpacity>
+
+                {isInstallment && (
+                  <View style={styles.installmentDetails}>
+                    <View style={styles.installmentRow}>
+                      <View style={styles.installmentField}>
+                        <Text style={styles.label}>Tranche n°</Text>
+                        <View style={styles.installmentCounter}>
+                          <TouchableOpacity 
+                            style={styles.counterButton}
+                            onPress={() => setInstallmentNumber(Math.max(1, installmentNumber - 1))}
+                          >
+                            <Ionicons name="remove" size={18} color={Colors.primary} />
+                          </TouchableOpacity>
+                          <Text style={styles.counterValue}>{installmentNumber}</Text>
+                          <TouchableOpacity 
+                            style={styles.counterButton}
+                            onPress={() => setInstallmentNumber(Math.min(installmentTotal, installmentNumber + 1))}
+                          >
+                            <Ionicons name="add" size={18} color={Colors.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                      <View style={styles.installmentField}>
+                        <Text style={styles.label}>Nombre total de tranches</Text>
+                        <View style={styles.installmentCounter}>
+                          <TouchableOpacity 
+                            style={styles.counterButton}
+                            onPress={() => {
+                              const newTotal = Math.max(2, installmentTotal - 1);
+                              setInstallmentTotal(newTotal);
+                              if (installmentNumber > newTotal) setInstallmentNumber(newTotal);
+                            }}
+                          >
+                            <Ionicons name="remove" size={18} color={Colors.primary} />
+                          </TouchableOpacity>
+                          <Text style={styles.counterValue}>{installmentTotal}</Text>
+                          <TouchableOpacity 
+                            style={styles.counterButton}
+                            onPress={() => setInstallmentTotal(Math.min(12, installmentTotal + 1))}
+                          >
+                            <Ionicons name="add" size={18} color={Colors.primary} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.label}>Montant de la tranche *</Text>
+                      <View style={styles.inputWrapper}>
+                        <Text style={styles.currencyPrefix}>FC</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={installmentAmount}
+                          onChangeText={setInstallmentAmount}
+                          placeholder="Montant à payer pour cette tranche"
+                          placeholderTextColor={Colors.textMuted}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                    </View>
+                    <View style={styles.installmentInfo}>
+                      <Ionicons name="information-circle-outline" size={16} color={Colors.textMuted} />
+                      <Text style={styles.installmentInfoText}>
+                        Tranche {installmentNumber} sur {installmentTotal} — Montant total : {formatCurrency(parseFloat(customAmount) || 0)}.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+
               <View style={styles.totalContainer}>
-                <Text style={styles.totalLabel}>Total à payer</Text>
+                <Text style={styles.totalLabel}>Total à payer{isInstallment ? ` (tranche ${installmentNumber}/${installmentTotal})` : ''}</Text>
                 <Text style={styles.totalAmount}>{formatCurrency(calculateTotal())}</Text>
               </View>
 
@@ -483,7 +605,7 @@ export default function NewPaymentScreen() {
                 </View>
               )}
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Montant</Text>
+                <Text style={styles.summaryLabel}>Montant total taxe</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(parseFloat(customAmount) || 0)}</Text>
               </View>
               {chassisNumber && (
@@ -498,13 +620,31 @@ export default function NewPaymentScreen() {
                   <Text style={styles.summaryValue}>{vehicleColor}</Text>
                 </View>
               )}
+              {isInstallment && (
+                <>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Tranche</Text>
+                    <Text style={[styles.summaryValue, { color: Colors.primary }]}>
+                      {installmentNumber} / {installmentTotal}
+                    </Text>
+                  </View>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Montant tranche</Text>
+                    <Text style={[styles.summaryValue, { color: Colors.accentGreen, fontWeight: '700' }]}>
+                      {formatCurrency(parseFloat(installmentAmount) || 0)}
+                    </Text>
+                  </View>
+                </>
+              )}
             </View>
 
             <LinearGradient
               colors={['rgba(123, 97, 255, 0.15)', 'rgba(0, 217, 255, 0.1)']}
               style={styles.totalCard}
             >
-              <Text style={styles.totalCardLabel}>Montant total</Text>
+              <Text style={styles.totalCardLabel}>
+                Montant{isInstallment ? ` (tranche ${installmentNumber}/${installmentTotal})` : ' total'}
+              </Text>
               <Text style={styles.totalCardAmount}>{formatCurrency(calculateTotal())}</Text>
             </LinearGradient>
 
@@ -820,5 +960,79 @@ const styles = StyleSheet.create({
     fontSize: rf.hero,
     fontWeight: '700',
     color: Colors.textPrimary,
+  },
+  // Styles paiement par tranche
+  installmentSection: {
+    marginBottom: rs.lg,
+  },
+  installmentToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: rr.lg,
+    padding: rs.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  installmentToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rs.sm,
+  },
+  installmentToggleText: {
+    fontSize: rf.md,
+    fontWeight: '500',
+    color: Colors.textPrimary,
+  },
+  installmentDetails: {
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: rr.lg,
+    padding: rs.md,
+    marginTop: rs.sm,
+    borderWidth: 1,
+    borderColor: Colors.primary + '30',
+  },
+  installmentRow: {
+    flexDirection: 'row',
+    gap: rs.md,
+  },
+  installmentField: {
+    flex: 1,
+  },
+  installmentCounter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+    borderRadius: rr.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginTop: rs.xs,
+  },
+  counterButton: {
+    padding: rs.md,
+  },
+  counterValue: {
+    fontSize: rf.xl,
+    fontWeight: '700',
+    color: Colors.primary,
+    minWidth: scale(36),
+    textAlign: 'center',
+  },
+  installmentInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: rs.xs,
+    marginTop: rs.md,
+    paddingTop: rs.sm,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  installmentInfoText: {
+    flex: 1,
+    fontSize: rf.sm,
+    color: Colors.textMuted,
+    lineHeight: rf.sm * 1.5,
   },
 });

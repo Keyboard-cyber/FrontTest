@@ -179,16 +179,16 @@ export const initializeDatabase = async (): Promise<void> => {
     }
   }
   
-  // Créer les index
+  // Migrations: ajouter les colonnes manquantes AVANT les index
+  await runMigrations(database);
+  
+  // Créer les index (après les migrations pour que toutes les colonnes existent)
   const indexStatements = CREATE_INDEXES_SQL.split(';').filter(s => s.trim());
   for (const statement of indexStatements) {
     if (statement.trim()) {
       await database.execAsync(statement + ';');
     }
   }
-  
-  // Migrations: ajouter les colonnes manquantes
-  await runMigrations(database);
   
   console.log('Database initialized successfully');
 };
@@ -215,6 +215,23 @@ const runMigrations = async (database: any): Promise<void> => {
       // La colonne existe déjà, ignorer l'erreur
       if (!e.message?.includes('duplicate column')) {
         console.log('service_id column already exists or migration skipped');
+      }
+    }
+
+    // Migration: Ajouter les colonnes de paiement par tranche
+    const installmentColumns = [
+      { name: 'installment_number', type: 'INTEGER' },
+      { name: 'installment_total', type: 'INTEGER' },
+      { name: 'installment_group_id', type: 'TEXT' },
+    ];
+    for (const col of installmentColumns) {
+      try {
+        await database.execAsync(`ALTER TABLE local_payments_queue ADD COLUMN ${col.name} ${col.type};`);
+        console.log(`Migration: Added ${col.name} column to local_payments_queue`);
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          console.log(`${col.name} column already exists or migration skipped`);
+        }
       }
     }
   } catch (error) {

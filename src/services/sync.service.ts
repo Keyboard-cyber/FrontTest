@@ -143,12 +143,13 @@ class SyncService {
 
       const pendingPayments = await getPendingPayments();
 
-      for (const payment of pendingPayments) {
+      // Séparer paiements normaux et tranches
+      const normalPayments = pendingPayments.filter(p => !p.installment_group_id);
+      const tranchePayments = pendingPayments.filter(p => !!p.installment_group_id);
+
+      // === Sync paiements normaux ===
+      for (const payment of normalPayments) {
         try {
-          // Debug: vérifier que qr_signature est bien présent
-          console.log('Payment from DB - qr_signature:', payment.qr_signature);
-          
-          // Préparer les données selon le format attendu par l'API
           const paymentData = {
             uuid: payment.local_uuid,
             payer_name: payment.payer_name,
@@ -166,53 +167,99 @@ class SyncService {
             terminal_id: payment.terminal_id,
             qr_signature: payment.qr_signature,
           };
-          
-          console.log('Envoi paiement au serveur:', JSON.stringify(paymentData, null, 2));
-          
-          const serverPayment = await apiService.createPayment(paymentData);
 
-          // Met à jour le statut avec la signature QR du serveur
-          await updatePaymentStatus(
-            payment.local_uuid,
-            'SYNCED',
-            serverPayment.receipt_no,
-            serverPayment.id,
-            serverPayment.qr_signature // Signature officielle du serveur
-          );
+          const serverPayment = await apiService.createPayment(paymentData);
+          await updatePaymentStatus(payment.local_uuid, 'SYNCED', serverPayment.receipt_no, serverPayment.id, serverPayment.qr_signature);
           result.synced++;
         } catch (error: any) {
           console.error(`Erreur sync paiement ${payment.local_uuid}:`, error);
-          
-          // Log détaillé de l'erreur
           if (error.response) {
-            console.error('Status:', error.response.status);
-            console.error('Détails erreur serveur:', JSON.stringify(error.response.data, null, 2));
-            
-            // Vérifier si c'est une 403 avec force_logout (utilisateur bloqué)
-            if (error.response.status === 403 && error.response.data?.force_logout === true) {
-              console.log('🚫 Utilisateur bloqué détecté pendant syncPendingPayments - arrêt immédiat');
+            console.error('Détails:', JSON.stringify(error.response.data, null, 2));
+            if (error.response.status === 403 && error.response.data?.force_logout) {
               result.userBlocked = true;
               result.errors.push(error.response.data?.message || 'Compte bloqué');
-              // Arrêter la boucle immédiatement
               break;
             }
           }
-          
-          // Vérifier si le paiement existe déjà sur le serveur (UUID déjà utilisé)
-          const existingPayment = await apiService.getPaymentByUuid(payment.local_uuid);
-          if (existingPayment) {
-            await updatePaymentStatus(
-              payment.local_uuid,
-              'SYNCED',
-              existingPayment.receipt_no,
-              existingPayment.id,
-              existingPayment.qr_signature // Signature officielle du serveur
-            );
+          // Vérifier doublon
+          const existing = await apiService.getPaymentByUuid(payment.local_uuid);
+          if (existing) {
+            await updatePaymentStatus(payment.local_uuid, 'SYNCED', existing.receipt_no, existing.id, existing.qr_signature);
             result.synced++;
           } else {
             await updatePaymentStatus(payment.local_uuid, 'FAILED');
             result.failed++;
             result.errors.push(`Paiement ${payment.local_uuid}: ${error.message}`);
+          }
+        }
+      }
+
+      // === Sync tranches ===
+      if (tranchePayments.length > 0 && !result.userBlocked) {
+        const groups = new Map<string, LocalPaymentQueue[]>();
+        for (const p of tranchePayments) {
+          const gid = p.installment_group_id!;
+          if (!groups.has(gid)) groups.set(gid, []);
+          groups.get(gid)!.push(p);
+        }
+
+        for (const [groupId, payments] of groups) {
+          try {
+            const first = payments[0];
+
+            // Étape 1: Créer la tranche sur le serveur
+            const totalAmount = payments.reduce((sum, p) => sum + p.total_amount, 0);
+            const tranche = await apiService.createTranche({
+              installment_group_id: groupId,
+              payer_name: first.payer_name,
+              payer_phone: first.payer_phone || null,
+              service_id: first.service_id,
+              tax_category_id: first.tax_categorie_id,
+              tax_type_id: first.tax_type_id,
+              total_amount: totalAmount,
+              installment_count: first.installment_total,
+              chassis_number: first.chassis_number || null,
+              vehicle_color: first.vehicle_color || null,
+              user_id: first.user_id,
+              terminal_id: first.terminal_id,
+            });
+
+            console.log('Tranche créée, id:', tranche.id);
+
+            // Étape 2: Sync les paiements avec le tranche_id
+            const serverResult = await apiService.syncTranches({
+              paiements: payments.map(p => ({
+                tranche_id: tranche.id,
+                local_uuid: p.local_uuid,
+                installment_number: p.installment_number,
+                amount: p.total_amount,
+                paid_at: p.paid_at,
+                qr_signature: p.qr_signature,
+                terminal_id: p.terminal_id,
+                user_id: p.user_id,
+              })),
+            });
+
+            for (const p of payments) {
+              const sp = (serverResult.paiements || serverResult.payments || [])?.find?.((x: any) => x.local_uuid === p.local_uuid || x.uuid === p.local_uuid);
+              await updatePaymentStatus(p.local_uuid, 'SYNCED', sp?.receipt_no || tranche.reference, sp?.id || tranche.id, sp?.qr_signature);
+              result.synced++;
+            }
+          } catch (error: any) {
+            console.error(`Erreur sync tranche ${groupId}:`, error);
+            if (error.response) {
+              console.error('Détails:', JSON.stringify(error.response.data, null, 2));
+              if (error.response.status === 403 && error.response.data?.force_logout) {
+                result.userBlocked = true;
+                result.errors.push(error.response.data?.message || 'Compte bloqué');
+                break;
+              }
+            }
+            for (const p of payments) {
+              await updatePaymentStatus(p.local_uuid, 'FAILED');
+              result.failed++;
+            }
+            result.errors.push(`Tranche ${groupId}: ${error.message}`);
           }
         }
       }

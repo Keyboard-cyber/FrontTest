@@ -150,7 +150,10 @@ export const HistoryScreen: React.FC<Props> = ({ navigation }) => {
       <View style={styles.paymentHeader}>
         <View style={styles.paymentInfo}>
           <Text style={styles.payerName}>{item.payer_name}</Text>
-          <Text style={styles.paymentType}>{item.typeLabel}</Text>
+          <Text style={styles.paymentType}>
+            {item.typeLabel}
+            {item.installment_number ? ` • Tranche ${item.installment_number}/${item.installment_total}` : ''}
+          </Text>
         </View>
         <View style={styles.paymentAmount}>
           <Text style={styles.amountText}>{formatCurrency(item.total_amount)}</Text>

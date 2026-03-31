@@ -126,10 +126,15 @@ class PrinterService {
   ${payment.chassis_number ? `<div class="row"><span>Châssis:</span><span>${payment.chassis_number}</span></div>` : ''}
   ${payment.vehicle_color ? `<div class="row"><span>Couleur:</span><span>${payment.vehicle_color}</span></div>` : ''}
   
+  ${payment.installment_number ? `
+  <div class="line"></div>
+  <div class="row"><span>Tranche:</span><span class="bold">${payment.installment_number} / ${payment.installment_total}</span></div>
+  ` : ''}
+  
   <div class="line"></div>
   
   <div class="center total">
-    TOTAL: ${this.formatAmount(payment.total_amount)}
+    ${payment.installment_number ? `TRANCHE ${payment.installment_number}/${payment.installment_total} : ` : 'TOTAL: '}${this.formatAmount(payment.total_amount)}
   </div>
   
   <div class="line"></div>

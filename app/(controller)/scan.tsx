@@ -14,12 +14,15 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Colors, BorderRadius } from '../../src/theme';
 import { getPaymentByUuid, getTaxCategorieById, getTaxTypeById, getLocalProfile } from '../../src/database';
 import { LocalPaymentQueue } from '../../src/types';
-import { apiService } from '../../src/services';
+import { apiService, qrCodeService } from '../../src/services';
+import type { QRPaymentData } from '../../src/services';
 
 interface PaymentDetails extends LocalPaymentQueue {
   categoryLabel?: string;
   typeLabel?: string;
   agentName?: string;
+  receiptNo?: string;
+  signatureValid?: boolean;
 }
 
 export default function ScanScreen() {
@@ -31,17 +34,35 @@ export default function ScanScreen() {
   const [showDetails, setShowDetails] = useState(false);
   const [verificationResult, setVerificationResult] = useState<'valid' | 'invalid' | 'not_found' | null>(null);
 
-  // Parser les données QR
-  const parseQrData = (data: string): { uuid: string; amount: string; date: string; agentId: string } | null => {
-    if (!data || !data.includes('|')) return null;
-    const parts = data.split('|');
-    if (parts.length < 4) return null;
-    return {
-      uuid: parts[0],
-      amount: parts[1],
-      date: parts[2],
-      agentId: parts[3],
-    };
+  // Parser les données QR (nouveau format JSON compact)
+  const parseQrData = (data: string): QRPaymentData | null => {
+    // Utiliser le service QR pour parser le format JSON compact
+    const qrData = qrCodeService.parseQRData(data);
+    if (qrData) return qrData;
+
+    // Fallback: ancien format pipe-separated uuid|amount|date|agentId
+    if (data && data.includes('|')) {
+      const parts = data.split('|');
+      if (parts.length >= 4) {
+        return {
+          v: 0,
+          id: parts[0],
+          pn: 'Inconnu',
+          am: parseFloat(parts[1]) || 0,
+          qt: 1,
+          up: parseFloat(parts[1]) || 0,
+          sv: 0,
+          tt: 0,
+          pd: new Date(parts[2]).getTime() || Date.now(),
+          ag: parseInt(parts[3]) || 0,
+          tm: 0,
+          st: 0,
+          sg: '',
+        };
+      }
+    }
+
+    return null;
   };
 
   // Démarrer le scan
@@ -72,94 +93,86 @@ export default function ScanScreen() {
       return;
     }
 
+    // Vérifier la signature du QR
+    const signatureValid = parsed.v >= 1 && parsed.sg ? qrCodeService.verifyQRSignature(parsed) : false;
+
+    // Mapper le statut depuis le QR
+    const statusMap: Record<number, 'PENDING' | 'SYNCED' | 'FAILED'> = {
+      0: 'PENDING',
+      1: 'SYNCED',
+      2: 'FAILED',
+    };
+
     try {
-      // D'abord chercher localement
-      let payment = await getPaymentByUuid(parsed.uuid);
-      
-      // Si pas trouvé localement, essayer via l'API
-      if (!payment) {
+      // Construire le paiement à partir des données QR directement
+      let payment: LocalPaymentQueue = {
+        local_uuid: parsed.id,
+        payer_name: parsed.pn,
+        payer_phone: parsed.pt || '',
+        service_id: parsed.sv,
+        tax_categorie_id: parsed.tc || 0,
+        tax_type_id: parsed.tt,
+        quantity: parsed.qt,
+        unit_price: parsed.up,
+        total_amount: parsed.am,
+        chassis_number: parsed.cn || null,
+        vehicle_color: parsed.vc || null,
+        paid_at: new Date(parsed.pd).toISOString(),
+        user_id: parsed.ag,
+        terminal_id: parsed.tm,
+        qr_signature: data,
+        status: statusMap[parsed.st] || 'PENDING',
+        server_receipt_no: parsed.rn || null,
+        server_payment_id: null,
+        created_at: new Date(parsed.pd).toISOString(),
+      };
+
+      // Enrichir avec la DB locale ou le serveur si disponible
+      const localPayment = await getPaymentByUuid(parsed.id);
+      if (localPayment) {
+        payment = { ...payment, ...localPayment };
+      } else {
         try {
-          const serverPayment = await apiService.verifyPayment(parsed.uuid);
+          const serverPayment = await apiService.verifyPayment(parsed.id);
           if (serverPayment) {
-            payment = {
-              local_uuid: serverPayment.uuid || parsed.uuid,
-              payer_name: serverPayment.payer_name,
-              payer_phone: serverPayment.payer_phone || '',
-              service_id: serverPayment.service_id,
-              tax_categorie_id: serverPayment.tax_categorie_id,
-              tax_type_id: serverPayment.tax_type_id,
-              quantity: serverPayment.quantity || 1,
-              unit_price: serverPayment.unit_price,
-              total_amount: serverPayment.total_amount,
-              chassis_number: serverPayment.chassis_number || null,
-              vehicle_color: serverPayment.vehicle_color || null,
-              paid_at: serverPayment.paid_at,
-              user_id: serverPayment.user_id,
-              terminal_id: serverPayment.terminal_id || 0,
-              qr_signature: data,
-              status: 'SYNCED',
-              server_receipt_no: serverPayment.receipt_no || null,
-              server_payment_id: serverPayment.id || null,
-              created_at: serverPayment.paid_at,
-            };
+            payment.status = 'SYNCED';
+            payment.server_receipt_no = serverPayment.receipt_no || parsed.rn || null;
+            payment.server_payment_id = serverPayment.id || null;
           }
         } catch (e) {
           console.log('Vérification serveur échouée:', e);
         }
       }
-      
-      if (payment) {
-        const category = await getTaxCategorieById(payment.tax_categorie_id);
-        const type = await getTaxTypeById(payment.tax_type_id);
-        
-        // Récupérer le nom de l'agent/percepteur
-        let agentName = `Agent #${payment.user_id}`;
-        try {
-          const localProfile = await getLocalProfile();
-          if (localProfile && localProfile.user_id === payment.user_id) {
-            agentName = localProfile.fullname;
-          } else {
-            const user = await apiService.getUserById(payment.user_id);
-            if (user) {
-              agentName = user.fullname;
-            }
+
+      // Récupérer les labels catégorie et type
+      const category = payment.tax_categorie_id ? await getTaxCategorieById(payment.tax_categorie_id) : null;
+      const type = await getTaxTypeById(payment.tax_type_id);
+
+      // Récupérer le nom de l'agent
+      let agentName = `Agent #${payment.user_id}`;
+      try {
+        const localProfile = await getLocalProfile();
+        if (localProfile && localProfile.user_id === payment.user_id) {
+          agentName = localProfile.fullname;
+        } else {
+          const user = await apiService.getUserById(payment.user_id);
+          if (user) {
+            agentName = user.fullname;
           }
-        } catch (e) {
-          console.log('Erreur récupération agent:', e);
         }
-        
-        setPaymentDetails({
-          ...payment,
-          categoryLabel: category?.label || 'N/A',
-          typeLabel: type?.label || 'N/A',
-          agentName,
-        });
-        setVerificationResult('valid');
-      } else {
-        // Afficher les infos du QR même si non trouvé
-        setPaymentDetails({
-          local_uuid: parsed.uuid,
-          payer_name: 'Inconnu',
-          payer_phone: '',
-          service_id: 0,
-          tax_categorie_id: 0,
-          tax_type_id: 0,
-          quantity: 1,
-          unit_price: parseFloat(parsed.amount) || 0,
-          total_amount: parseFloat(parsed.amount) || 0,
-          chassis_number: null,
-          vehicle_color: null,
-          paid_at: parsed.date,
-          user_id: parseInt(parsed.agentId) || 0,
-          terminal_id: 0,
-          qr_signature: data,
-          status: 'PENDING',
-          server_receipt_no: null,
-          server_payment_id: null,
-          created_at: parsed.date,
-        });
-        setVerificationResult('not_found');
+      } catch (e) {
+        console.log('Erreur récupération agent:', e);
       }
+
+      setPaymentDetails({
+        ...payment,
+        categoryLabel: category?.label || undefined,
+        typeLabel: type?.label || undefined,
+        agentName,
+        receiptNo: payment.server_receipt_no || parsed.rn || undefined,
+        signatureValid,
+      });
+      setVerificationResult(signatureValid ? 'valid' : 'not_found');
       setShowDetails(true);
     } catch (error) {
       console.error('Erreur vérification:', error);
@@ -327,34 +340,51 @@ export default function ScanScreen() {
 
           {paymentDetails && verificationResult !== 'invalid' && (
             <View style={styles.detailsContainer}>
+              {paymentDetails.receiptNo && (
+                <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>N° Reçu</Text>
+                  <Text style={[styles.detailValue, { fontWeight: '700', color: '#FF9500' }]}>{paymentDetails.receiptNo}</Text>
+                </View>
+              )}
+              
               <View style={styles.detailRow}>
                 <Text style={styles.detailLabel}>Payeur</Text>
                 <Text style={styles.detailValue}>{paymentDetails.payer_name}</Text>
               </View>
               
-              {paymentDetails.payer_phone && (
+              {paymentDetails.payer_phone ? (
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Téléphone</Text>
                   <Text style={styles.detailValue}>{paymentDetails.payer_phone}</Text>
                 </View>
-              )}
+              ) : null}
               
-              {paymentDetails.categoryLabel && paymentDetails.categoryLabel !== 'N/A' && (
+              {paymentDetails.categoryLabel && (
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Type de taxe</Text>
+                  <Text style={styles.detailLabel}>Catégorie</Text>
                   <Text style={styles.detailValue}>{paymentDetails.categoryLabel}</Text>
                 </View>
               )}
               
-              {paymentDetails.typeLabel && paymentDetails.typeLabel !== 'N/A' && (
+              {paymentDetails.typeLabel && (
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Type</Text>
+                  <Text style={styles.detailLabel}>Type de taxe</Text>
                   <Text style={styles.detailValue}>{paymentDetails.typeLabel}</Text>
                 </View>
               )}
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Quantité</Text>
+                <Text style={styles.detailValue}>{paymentDetails.quantity}</Text>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Prix unitaire</Text>
+                <Text style={styles.detailValue}>{formatCurrency(paymentDetails.unit_price)}</Text>
+              </View>
               
               <View style={styles.detailRow}>
-                <Text style={styles.detailLabel}>Montant</Text>
+                <Text style={styles.detailLabel}>Montant total</Text>
                 <Text style={[styles.detailValue, styles.amountValue]}>
                   {formatCurrency(paymentDetails.total_amount)}
                 </Text>
@@ -379,22 +409,47 @@ export default function ScanScreen() {
                 </View>
               )}
 
-              {verificationResult === 'valid' && (
+              {paymentDetails.vehicle_color && (
                 <View style={styles.detailRow}>
-                  <Text style={styles.detailLabel}>Statut</Text>
-                  <View style={[
-                    styles.statusBadge,
-                    { backgroundColor: paymentDetails.status === 'SYNCED' ? Colors.success + '20' : Colors.warning + '20' }
-                  ]}>
-                    <Text style={[
-                      styles.statusText,
-                      { color: paymentDetails.status === 'SYNCED' ? Colors.success : Colors.warning }
-                    ]}>
-                      {paymentDetails.status === 'SYNCED' ? 'Synchronisé' : 'En attente'}
-                    </Text>
-                  </View>
+                  <Text style={styles.detailLabel}>Couleur véhicule</Text>
+                  <Text style={styles.detailValue}>{paymentDetails.vehicle_color}</Text>
                 </View>
               )}
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Statut</Text>
+                <View style={[
+                  styles.statusBadge,
+                  { backgroundColor: paymentDetails.status === 'SYNCED' ? Colors.success + '20' : paymentDetails.status === 'FAILED' ? Colors.error + '20' : Colors.warning + '20' }
+                ]}>
+                  <Text style={[
+                    styles.statusText,
+                    { color: paymentDetails.status === 'SYNCED' ? Colors.success : paymentDetails.status === 'FAILED' ? Colors.error : Colors.warning }
+                  ]}>
+                    {paymentDetails.status === 'SYNCED' ? 'Synchronisé' : paymentDetails.status === 'FAILED' ? 'Échoué' : 'En attente'}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Signature</Text>
+                <View style={[
+                  styles.statusBadge,
+                  { backgroundColor: paymentDetails.signatureValid ? Colors.success + '20' : Colors.error + '20' }
+                ]}>
+                  <Ionicons 
+                    name={paymentDetails.signatureValid ? 'checkmark-circle' : 'close-circle'} 
+                    size={14} 
+                    color={paymentDetails.signatureValid ? Colors.success : Colors.error} 
+                  />
+                  <Text style={[
+                    styles.statusText,
+                    { color: paymentDetails.signatureValid ? Colors.success : Colors.error, marginLeft: 4 }
+                  ]}>
+                    {paymentDetails.signatureValid ? 'Valide' : 'Non vérifiée'}
+                  </Text>
+                </View>
+              </View>
               
               <View style={styles.uuidContainer}>
                 <Text style={styles.uuidLabel}>UUID</Text>
@@ -644,6 +699,8 @@ const styles = StyleSheet.create({
     color: '#FF9500',
   },
   statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,

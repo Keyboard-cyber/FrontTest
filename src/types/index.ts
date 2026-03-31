@@ -97,7 +97,7 @@ export interface Payment {
   payer_name: string;
   payer_phone: string | null;
   service_id: number;
-  tax_categorie_id: number;
+  tax_categorie_id: number | null;
   tax_type_id: number;
   quantity: number;
   unit_price: number;
@@ -109,6 +109,10 @@ export interface Payment {
   terminal_id: number;
   qr_signature: string;
   receipt_no?: string;
+  tranche_id?: number;
+  installment_number?: number | null;
+  installment_total?: number | null;
+  installment_group_id?: string | null;
 }
 
 export interface LocalPaymentQueue {
@@ -130,6 +134,10 @@ export interface LocalPaymentQueue {
   status: 'PENDING' | 'SYNCED' | 'FAILED';
   server_receipt_no: string | null;
   server_payment_id: number | null;
+  // Paiement par tranche
+  installment_number: number | null;   // Numéro de cette tranche (1, 2, 3...)
+  installment_total: number | null;    // Nombre total de tranches prévues
+  installment_group_id: string | null; // UUID commun à toutes les tranches d'un même paiement
   created_at: string;
 }
 
@@ -149,3 +157,26 @@ export interface AuthResponse {
 }
 
 export type PaymentStatus = 'PENDING' | 'SYNCED' | 'FAILED';
+
+export interface Tranche {
+  id: number;
+  reference: string;
+  payer_name: string;
+  payer_phone: string | null;
+  service_id: number;
+  tax_categorie_id: number | null;
+  tax_type_id: number;
+  total_amount: number;
+  installment_count: number;
+  paid_installments: number;
+  paid_amount: number;
+  remaining_amount: number;
+  status: 'pending' | 'partial' | 'completed' | 'cancelled';
+  user_id: number;
+  terminal_id: number;
+  chassis_number: string | null;
+  vehicle_color: string | null;
+  created_at: string;
+  updated_at: string;
+  payments?: Payment[];
+}

@@ -207,12 +207,14 @@ export const addPaymentToQueue = async (payment: LocalPaymentQueue): Promise<voi
   await db.runAsync(
     `INSERT INTO local_payments_queue (local_uuid, payer_name, payer_phone, service_id, tax_categorie_id, 
      tax_type_id, quantity, unit_price, total_amount, chassis_number, vehicle_color, paid_at, user_id, 
-     terminal_id, qr_signature, status, server_receipt_no, server_payment_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     terminal_id, qr_signature, status, server_receipt_no, server_payment_id, 
+     installment_number, installment_total, installment_group_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [payment.local_uuid, payment.payer_name, payment.payer_phone, payment.service_id, payment.tax_categorie_id,
      payment.tax_type_id, payment.quantity, payment.unit_price, payment.total_amount, payment.chassis_number,
      payment.vehicle_color, payment.paid_at, payment.user_id, payment.terminal_id, payment.qr_signature,
-     payment.status, payment.server_receipt_no, payment.server_payment_id, payment.created_at]
+     payment.status, payment.server_receipt_no, payment.server_payment_id,
+     payment.installment_number, payment.installment_total, payment.installment_group_id, payment.created_at]
   );
 };
 
@@ -237,6 +239,14 @@ export const getPaymentByUuid = async (uuid: string): Promise<LocalPaymentQueue 
     [uuid]
   );
   return (result as LocalPaymentQueue) || null;
+};
+
+export const getPaymentsByInstallmentGroup = async (groupId: string): Promise<LocalPaymentQueue[]> => {
+  const db = await getDatabase();
+  return await db.getAllAsync(
+    'SELECT * FROM local_payments_queue WHERE installment_group_id = ? ORDER BY installment_number ASC',
+    [groupId]
+  ) as LocalPaymentQueue[];
 };
 
 export const updatePaymentStatus = async (

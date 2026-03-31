@@ -103,8 +103,9 @@ Type: ${payment.typeLabel}
 Catégorie: ${payment.categoryLabel}
 Quantité: ${payment.quantity}
 Prix unitaire: ${formatCurrency(payment.unit_price)}
+${payment.installment_number ? `\nTranche: ${payment.installment_number} / ${payment.installment_total}` : ''}
 
-TOTAL: ${formatCurrency(payment.total_amount)}
+${payment.installment_number ? `TRANCHE ${payment.installment_number}/${payment.installment_total}: ` : 'TOTAL: '}${formatCurrency(payment.total_amount)}
 
 Agent: ${profile?.fullname}
 ID Agent: ${profile?.user_uid}
@@ -235,8 +236,22 @@ ID Agent: ${profile?.user_uid}
             </View>
           )}
 
+          {payment.installment_number && (
+            <>
+              <View style={styles.separator} />
+              <View style={styles.detailRow}>
+                <Text style={styles.detailLabel}>Tranche</Text>
+                <Text style={[styles.detailValue, { color: Colors.primary, fontWeight: '700' as const }]}>
+                  {payment.installment_number} / {payment.installment_total}
+                </Text>
+              </View>
+            </>
+          )}
+
           <View style={styles.totalContainer}>
-            <Text style={styles.totalLabel}>TOTAL</Text>
+            <Text style={styles.totalLabel}>
+              {payment.installment_number ? `TRANCHE ${payment.installment_number}/${payment.installment_total}` : 'TOTAL'}
+            </Text>
             <Text style={styles.totalAmount}>{formatCurrency(payment.total_amount)}</Text>
           </View>
         </View>

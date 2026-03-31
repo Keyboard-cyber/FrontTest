@@ -249,6 +249,37 @@ export const getPaymentsByInstallmentGroup = async (groupId: string): Promise<Lo
   ) as LocalPaymentQueue[];
 };
 
+/**
+ * Trouve les tranches incomplètes pour un payeur + type de taxe.
+ * Retourne le groupe dont le nombre de paiements < installment_total.
+ */
+export const getIncompleteInstallment = async (
+  payerName: string,
+  taxTypeId: number
+): Promise<{ groupId: string; paidCount: number; total: number; payments: LocalPaymentQueue[] } | null> => {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync(
+    `SELECT installment_group_id, installment_total, COUNT(*) as paid_count
+     FROM local_payments_queue
+     WHERE payer_name = ? AND tax_type_id = ? AND installment_group_id IS NOT NULL
+     GROUP BY installment_group_id
+     HAVING paid_count < installment_total
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [payerName, taxTypeId]
+  ) as { installment_group_id: string; installment_total: number; paid_count: number } | null;
+
+  if (!row) return null;
+
+  const payments = await getPaymentsByInstallmentGroup(row.installment_group_id);
+  return {
+    groupId: row.installment_group_id,
+    paidCount: row.paid_count,
+    total: row.installment_total,
+    payments,
+  };
+};
+
 export const updatePaymentStatus = async (
   uuid: string, 
   status: 'PENDING' | 'SYNCED' | 'FAILED',

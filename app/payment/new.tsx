@@ -23,6 +23,7 @@ import {
   getTaxTypes, 
   addPaymentToQueue,
   getLocalTerminal,
+  getIncompleteInstallment,
 } from '../../src/database';
 import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue } from '../../src/types';
 import { Colors, Shadows } from '../../src/theme';
@@ -53,6 +54,9 @@ export default function NewPaymentScreen() {
   const [installmentTotal, setInstallmentTotal] = useState(2);
   const [installmentNumber, setInstallmentNumber] = useState(1);
   const [installmentAmount, setInstallmentAmount] = useState('');
+  // Tranche existante en cours de complétion
+  const [existingGroupId, setExistingGroupId] = useState<string | null>(null);
+  const [isContinuation, setIsContinuation] = useState(false);
 
   // Étape du formulaire
   const [step, setStep] = useState<'category' | 'type' | 'details' | 'confirm'>('category');
@@ -92,7 +96,49 @@ export default function NewPaymentScreen() {
     if (taxType.amount) {
       setCustomAmount(taxType.amount.toString());
     }
+    // Reset tranche continuation state
+    setExistingGroupId(null);
+    setIsContinuation(false);
+    setIsInstallment(false);
+    setInstallmentNumber(1);
+    setInstallmentTotal(2);
+    setInstallmentAmount('');
     setStep('details');
+  };
+
+  // Vérifie s'il y a une tranche incomplète pour ce payeur + taxe
+  const checkIncompleteInstallment = async () => {
+    if (!selectedTaxType || !payerName.trim()) return;
+    try {
+      const result = await getIncompleteInstallment(payerName.trim(), selectedTaxType.tax_type_id);
+      if (result && result.paidCount < result.total) {
+        const nextNumber = result.paidCount + 1;
+        Alert.alert(
+          'Tranche en cours',
+          `${payerName} a déjà payé ${result.paidCount}/${result.total} tranche(s) pour "${selectedTaxType.label}". Voulez-vous continuer avec la tranche ${nextNumber} ?`,
+          [
+            { text: 'Non', style: 'cancel' },
+            {
+              text: 'Oui, continuer',
+              onPress: () => {
+                setIsInstallment(true);
+                setIsContinuation(true);
+                setExistingGroupId(result.groupId);
+                setInstallmentNumber(nextNumber);
+                setInstallmentTotal(result.total);
+                // Pré-remplir le montant de la tranche avec celui de la dernière tranche payée
+                const lastPayment = result.payments[result.payments.length - 1];
+                if (lastPayment) {
+                  setInstallmentAmount(lastPayment.total_amount.toString());
+                }
+              },
+            },
+          ]
+        );
+      }
+    } catch (error) {
+      console.error('Erreur vérification tranche:', error);
+    }
   };
 
   const calculateTotal = (): number => {
@@ -167,7 +213,9 @@ export default function NewPaymentScreen() {
       const terminalId = terminal?.terminal_id || 1;
 
       // Générer un group_id commun si paiement par tranche
-      const installmentGroupId = isInstallment ? uuidv4() : null;
+      const installmentGroupId = isInstallment
+        ? (existingGroupId || uuidv4())
+        : null;
 
       const uuid = uuidv4();
       const payment: LocalPaymentQueue = {
@@ -262,6 +310,8 @@ export default function NewPaymentScreen() {
     setInstallmentTotal(2);
     setInstallmentNumber(1);
     setInstallmentAmount('');
+    setExistingGroupId(null);
+    setIsContinuation(false);
     setStep('category');
   };
 
@@ -386,6 +436,7 @@ export default function NewPaymentScreen() {
                     style={styles.input}
                     value={payerName}
                     onChangeText={setPayerName}
+                    onBlur={checkIncompleteInstallment}
                     placeholder="Entrez le nom"
                     placeholderTextColor={Colors.textMuted}
                   />
@@ -454,8 +505,11 @@ export default function NewPaymentScreen() {
               <View style={styles.installmentSection}>
                 <TouchableOpacity 
                   style={styles.installmentToggle}
-                  onPress={() => setIsInstallment(!isInstallment)}
-                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (isContinuation) return; // Ne pas désactiver si continuation
+                    setIsInstallment(!isInstallment);
+                  }}
+                  activeOpacity={isContinuation ? 1 : 0.7}
                 >
                   <View style={styles.installmentToggleLeft}>
                     <Ionicons 
@@ -474,20 +528,30 @@ export default function NewPaymentScreen() {
 
                 {isInstallment && (
                   <View style={styles.installmentDetails}>
+                    {isContinuation && (
+                      <View style={{ backgroundColor: 'rgba(26, 115, 232, 0.1)', padding: rs.md, borderRadius: 8, marginBottom: rs.md, flexDirection: 'row', alignItems: 'center' }}>
+                        <Ionicons name="information-circle" size={20} color={Colors.primary} />
+                        <Text style={{ color: Colors.primary, marginLeft: 8, flex: 1, fontSize: rf.sm }}>
+                          Continuation de tranche existante ({installmentNumber}/{installmentTotal})
+                        </Text>
+                      </View>
+                    )}
                     <View style={styles.installmentRow}>
                       <View style={styles.installmentField}>
                         <Text style={styles.label}>Tranche n°</Text>
-                        <View style={styles.installmentCounter}>
+                        <View style={[styles.installmentCounter, isContinuation && { opacity: 0.5 }]}>
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => setInstallmentNumber(Math.max(1, installmentNumber - 1))}
+                            onPress={() => !isContinuation && setInstallmentNumber(Math.max(1, installmentNumber - 1))}
+                            disabled={isContinuation}
                           >
                             <Ionicons name="remove" size={18} color={Colors.primary} />
                           </TouchableOpacity>
                           <Text style={styles.counterValue}>{installmentNumber}</Text>
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => setInstallmentNumber(Math.min(installmentTotal, installmentNumber + 1))}
+                            onPress={() => !isContinuation && setInstallmentNumber(Math.min(installmentTotal, installmentNumber + 1))}
+                            disabled={isContinuation}
                           >
                             <Ionicons name="add" size={18} color={Colors.primary} />
                           </TouchableOpacity>
@@ -495,21 +559,24 @@ export default function NewPaymentScreen() {
                       </View>
                       <View style={styles.installmentField}>
                         <Text style={styles.label}>Nombre total de tranches</Text>
-                        <View style={styles.installmentCounter}>
+                        <View style={[styles.installmentCounter, isContinuation && { opacity: 0.5 }]}>
                           <TouchableOpacity 
                             style={styles.counterButton}
                             onPress={() => {
+                              if (isContinuation) return;
                               const newTotal = Math.max(2, installmentTotal - 1);
                               setInstallmentTotal(newTotal);
                               if (installmentNumber > newTotal) setInstallmentNumber(newTotal);
                             }}
+                            disabled={isContinuation}
                           >
                             <Ionicons name="remove" size={18} color={Colors.primary} />
                           </TouchableOpacity>
                           <Text style={styles.counterValue}>{installmentTotal}</Text>
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => setInstallmentTotal(Math.min(12, installmentTotal + 1))}
+                            onPress={() => !isContinuation && setInstallmentTotal(Math.min(12, installmentTotal + 1))}
+                            disabled={isContinuation}
                           >
                             <Ionicons name="add" size={18} color={Colors.primary} />
                           </TouchableOpacity>

@@ -12,7 +12,7 @@ import { useLocalSearchParams, Link, router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import QRCode from 'react-native-qrcode-svg';
-import { getPaymentByUuid, getTaxCategorieById, getTaxTypeById } from '../../../src/database';
+import { getPaymentByUuid, getTaxCategorieById, getTaxTypeById, getInstallmentGroupSummary } from '../../../src/database';
 import { LocalPaymentQueue } from '../../../src/types';
 import { useAuth } from '../../../src/contexts';
 import { Colors, Spacing, BorderRadius, FontSizes, FontWeights, Shadows } from '../../../src/theme';
@@ -20,6 +20,9 @@ import { Colors, Spacing, BorderRadius, FontSizes, FontWeights, Shadows } from '
 interface PaymentDetails extends LocalPaymentQueue {
   categoryLabel?: string;
   typeLabel?: string;
+  installment_paid_amount?: number;
+  installment_paid_count?: number;
+  installment_complete?: boolean;
 }
 
 export default function ReceiptScreen() {
@@ -38,10 +41,24 @@ export default function ReceiptScreen() {
       if (p) {
         const category = await getTaxCategorieById(p.tax_categorie_id);
         const type = await getTaxTypeById(p.tax_type_id);
+        let installment_paid_amount: number | undefined;
+        let installment_paid_count: number | undefined;
+        let installment_complete: boolean | undefined;
+        if (p.installment_group_id) {
+          const summary = await getInstallmentGroupSummary(p.installment_group_id);
+          if (summary) {
+            installment_paid_amount = summary.paidAmount;
+            installment_paid_count = summary.paidCount;
+            installment_complete = summary.isComplete;
+          }
+        }
         setPayment({
           ...p,
           categoryLabel: category?.label || 'N/A',
           typeLabel: type?.label || 'N/A',
+          installment_paid_amount,
+          installment_paid_count,
+          installment_complete,
         });
       }
     } catch (error) {
@@ -104,6 +121,7 @@ Catégorie: ${payment.categoryLabel}
 Quantité: ${payment.quantity}
 Prix unitaire: ${formatCurrency(payment.unit_price)}
 ${payment.installment_number ? `\nTranche: ${payment.installment_number} / ${payment.installment_total}` : ''}
+${payment.installment_paid_amount != null ? `Payé: ${formatCurrency(payment.installment_paid_amount)}\nReste: ${payment.installment_complete ? 'Complet' : `${(payment.installment_total || 0) - (payment.installment_paid_count || 0)} tranche(s)`}` : ''}
 
 ${payment.installment_number ? `TRANCHE ${payment.installment_number}/${payment.installment_total}: ` : 'TOTAL: '}${formatCurrency(payment.total_amount)}
 
@@ -245,6 +263,24 @@ ID Agent: ${profile?.user_uid}
                   {payment.installment_number} / {payment.installment_total}
                 </Text>
               </View>
+              {payment.installment_paid_amount != null && (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Montant payé</Text>
+                    <Text style={[styles.detailValue, { color: '#34a853', fontWeight: '600' as const }]}>
+                      {formatCurrency(payment.installment_paid_amount)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Reste</Text>
+                    <Text style={[styles.detailValue, { color: payment.installment_complete ? '#34a853' : '#ea4335', fontWeight: '600' as const }]}>
+                      {payment.installment_complete
+                        ? 'Complet ✓'
+                        : `${(payment.installment_total || 0) - (payment.installment_paid_count || 0)} tranche(s)`}
+                    </Text>
+                  </View>
+                </>
+              )}
             </>
           )}
 

@@ -250,6 +250,39 @@ export const getPaymentsByInstallmentGroup = async (groupId: string): Promise<Lo
 };
 
 /**
+ * Résumé d'un groupe de tranches : montant payé, nombre payé, total de tranches, montant cible.
+ */
+export const getInstallmentGroupSummary = async (groupId: string): Promise<{
+  paidCount: number;
+  totalCount: number;
+  paidAmount: number;
+  targetAmount: number;
+  isComplete: boolean;
+} | null> => {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync(
+    `SELECT p.installment_total as total_count,
+            COUNT(*) as paid_count,
+            SUM(p.total_amount) as paid_amount,
+            COALESCE(t.amount, 0) as target_amount
+     FROM local_payments_queue p
+     LEFT JOIN local_tax_types t ON t.tax_type_id = p.tax_type_id
+     WHERE p.installment_group_id = ?
+     GROUP BY p.installment_group_id`,
+    [groupId]
+  ) as { paid_count: number; total_count: number; paid_amount: number; target_amount: number } | null;
+  if (!row || !row.total_count) return null;
+  const isComplete = row.paid_count >= row.total_count || (row.target_amount > 0 && row.paid_amount >= row.target_amount);
+  return {
+    paidCount: row.paid_count,
+    totalCount: row.total_count,
+    paidAmount: row.paid_amount,
+    targetAmount: row.target_amount,
+    isComplete,
+  };
+};
+
+/**
  * Trouve les tranches incomplètes pour un payeur + type de taxe.
  * Retourne le groupe dont le nombre de paiements < installment_total.
  */
@@ -258,18 +291,31 @@ export const getIncompleteInstallment = async (
   taxTypeId: number
 ): Promise<{ groupId: string; paidCount: number; total: number; payments: LocalPaymentQueue[] } | null> => {
   const db = await getDatabase();
+  
+  // D'abord on récupère le dernier groupe de tranches pour ce payeur/taxe
   const row = await db.getFirstAsync(
-    `SELECT installment_group_id, installment_total, COUNT(*) as paid_count
-     FROM local_payments_queue
-     WHERE payer_name = ? AND tax_type_id = ? AND installment_group_id IS NOT NULL
-     GROUP BY installment_group_id
-     HAVING paid_count < installment_total
-     ORDER BY created_at DESC
+    `SELECT p.installment_group_id, p.installment_total, COUNT(*) as paid_count,
+            SUM(p.total_amount) as paid_amount
+     FROM local_payments_queue p
+     WHERE p.payer_name = ? AND p.tax_type_id = ? AND p.installment_group_id IS NOT NULL
+     GROUP BY p.installment_group_id
+     ORDER BY p.created_at DESC
      LIMIT 1`,
     [payerName, taxTypeId]
-  ) as { installment_group_id: string; installment_total: number; paid_count: number } | null;
+  ) as { installment_group_id: string; installment_total: number; paid_count: number; paid_amount: number } | null;
 
   if (!row) return null;
+
+  // Vérifier si déjà complet (par nombre OU par montant)
+  if (row.paid_count >= row.installment_total) return null;
+
+  const taxType = await db.getFirstAsync(
+    `SELECT amount FROM local_tax_types WHERE tax_type_id = ?`,
+    [taxTypeId]
+  ) as { amount: number | null } | null;
+
+  const targetAmount = taxType?.amount || 0;
+  if (targetAmount > 0 && row.paid_amount >= targetAmount) return null;
 
   const payments = await getPaymentsByInstallmentGroup(row.installment_group_id);
   return {

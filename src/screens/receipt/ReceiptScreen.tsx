@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'react-native-qrcode-svg';
-import { getPaymentByUuid, getTaxCategorieById, getTaxTypeById } from '../../database';
+import { getPaymentByUuid, getTaxCategorieById, getTaxTypeById, getInstallmentGroupSummary } from '../../database';
 import { LocalPaymentQueue } from '../../types';
 import { useAuth } from '../../contexts';
 
@@ -22,6 +22,9 @@ interface Props {
 interface PaymentDetails extends LocalPaymentQueue {
   categoryLabel?: string;
   typeLabel?: string;
+  installment_paid_amount?: number;
+  installment_paid_count?: number;
+  installment_complete?: boolean;
 }
 
 export const ReceiptScreen: React.FC<Props> = ({ route, navigation }) => {
@@ -41,10 +44,24 @@ export const ReceiptScreen: React.FC<Props> = ({ route, navigation }) => {
         // Récupérer la catégorie seulement si tax_categorie_id n'est pas null
         const category = p.tax_categorie_id ? await getTaxCategorieById(p.tax_categorie_id) : null;
         const type = await getTaxTypeById(p.tax_type_id);
+        let installment_paid_amount: number | undefined;
+        let installment_paid_count: number | undefined;
+        let installment_complete: boolean | undefined;
+        if (p.installment_group_id) {
+          const summary = await getInstallmentGroupSummary(p.installment_group_id);
+          if (summary) {
+            installment_paid_amount = summary.paidAmount;
+            installment_paid_count = summary.paidCount;
+            installment_complete = summary.isComplete;
+          }
+        }
         setPayment({
           ...p,
           categoryLabel: category?.label || 'Taxe directe',
           typeLabel: type?.label || 'N/A',
+          installment_paid_amount,
+          installment_paid_count,
+          installment_complete,
         });
       }
     } catch (error) {
@@ -116,6 +133,7 @@ Catégorie: ${payment.categoryLabel}
 Quantité: ${payment.quantity}
 Prix unitaire: ${formatCurrency(payment.unit_price)}
 ${payment.installment_number ? `\nTranche: ${payment.installment_number} / ${payment.installment_total}` : ''}
+${payment.installment_paid_amount != null ? `Payé: ${formatCurrency(payment.installment_paid_amount)}\nReste: ${payment.installment_complete ? 'Complet' : `${(payment.installment_total || 0) - (payment.installment_paid_count || 0)} tranche(s)`}` : ''}
 
 TOTAL: ${formatCurrency(payment.total_amount)}
 
@@ -256,6 +274,24 @@ ID Agent: ${profile?.user_uid}
                   {payment.installment_number} / {payment.installment_total}
                 </Text>
               </View>
+              {payment.installment_paid_amount != null && (
+                <>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Montant payé</Text>
+                    <Text style={[styles.detailValue, { color: '#34a853', fontWeight: '600' }]}>
+                      {formatCurrency(payment.installment_paid_amount)}
+                    </Text>
+                  </View>
+                  <View style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>Reste</Text>
+                    <Text style={[styles.detailValue, { color: payment.installment_complete ? '#34a853' : '#ea4335', fontWeight: '600' }]}>
+                      {payment.installment_complete
+                        ? 'Complet ✓'
+                        : `${(payment.installment_total || 0) - (payment.installment_paid_count || 0)} tranche(s)`}
+                    </Text>
+                  </View>
+                </>
+              )}
             </>
           )}
 

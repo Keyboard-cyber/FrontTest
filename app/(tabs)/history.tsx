@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { getAllPayments, getTaxCategorieById, getTaxTypeById, getLocalTerminal } from '../../src/database';
+import { getAllPayments, getTaxCategorieById, getTaxTypeById, getLocalTerminal, getInstallmentGroupSummary } from '../../src/database';
 import { syncService } from '../../src/services/sync.service';
 import { printerService } from '../../src/services/printer.service';
 import { useAuth } from '../../src/contexts/AuthContext';
@@ -24,6 +24,10 @@ interface Payment extends LocalPaymentQueue {
   sync_status: string;
   tax_type_label?: string;
   tax_categorie_label?: string;
+  // Résumé tranche
+  installment_paid_amount?: number;
+  installment_paid_count?: number;
+  installment_complete?: boolean;
 }
 
 // Types pour les filtres
@@ -71,12 +75,28 @@ export default function HistoryScreen() {
             getTaxTypeById(item.tax_type_id),
           ]);
           
+          // Résumé tranche si applicable
+          let installment_paid_amount: number | undefined;
+          let installment_paid_count: number | undefined;
+          let installment_complete: boolean | undefined;
+          if (item.installment_group_id) {
+            const summary = await getInstallmentGroupSummary(item.installment_group_id);
+            if (summary) {
+              installment_paid_amount = summary.paidAmount;
+              installment_paid_count = summary.paidCount;
+              installment_complete = summary.isComplete;
+            }
+          }
+
           return {
             ...item,
             uuid: item.local_uuid,
             sync_status: item.status.toLowerCase(),
             tax_type_label: taxType?.label || 'Type inconnu',
             tax_categorie_label: categorie?.label || 'Taxe directe',
+            installment_paid_amount,
+            installment_paid_count,
+            installment_complete,
           };
         })
       );
@@ -318,7 +338,20 @@ export default function HistoryScreen() {
     <View style={styles.paymentCard}>
       <View style={styles.paymentHeader}>
         <View style={styles.paymentInfo}>
-          <Text style={styles.payerName}>{item.payer_name}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.payerName}>{item.payer_name}</Text>
+            {item.installment_number ? (
+              <View style={{ backgroundColor: '#1a73e820', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#1a73e8' }}>
+                  TRANCHE {item.installment_number}/{item.installment_total}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ backgroundColor: '#34a85320', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#34a853' }}>TOTAL</Text>
+              </View>
+            )}
+          </View>
           <Text style={styles.payerPhone}>{item.payer_phone}</Text>
         </View>
         <View style={styles.paymentStatus}>
@@ -344,6 +377,20 @@ export default function HistoryScreen() {
           <Text style={styles.time}>{formatTime(item.paid_at)}</Text>
         </View>
       </View>
+
+      {/* Résumé tranche : payé / reste */}
+      {item.installment_number && item.installment_paid_amount != null && (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingBottom: 8, marginTop: -4 }}>
+          <Text style={{ fontSize: 11, color: '#34a853' }}>
+            Payé : {formatAmount(item.installment_paid_amount)} ({item.installment_paid_count}/{item.installment_total})
+          </Text>
+          <Text style={{ fontSize: 11, color: item.installment_complete ? '#34a853' : '#ea4335' }}>
+            {item.installment_complete
+              ? 'Complet ✓'
+              : `Reste : ${item.installment_total! - item.installment_paid_count!} tranche(s)`}
+          </Text>
+        </View>
+      )}
 
       <View style={styles.paymentFooter}>
         <Text style={styles.receiptNumber}>N° {item.uuid.slice(0, 8).toUpperCase()}</Text>

@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts';
-import { getAllPayments, getTaxCategorieById, getTaxTypeById } from '../../database';
+import { getAllPayments, getTaxCategorieById, getTaxTypeById, getInstallmentGroupSummary } from '../../database';
 import { LocalPaymentQueue } from '../../types';
 
 interface Props {
@@ -20,6 +20,9 @@ interface Props {
 interface PaymentWithDetails extends LocalPaymentQueue {
   categoryLabel?: string;
   typeLabel?: string;
+  installment_paid_amount?: number;
+  installment_paid_count?: number;
+  installment_complete?: boolean;
 }
 
 export const HistoryScreen: React.FC<Props> = ({ navigation }) => {
@@ -40,10 +43,24 @@ export const HistoryScreen: React.FC<Props> = ({ navigation }) => {
           // Récupérer la catégorie seulement si tax_categorie_id n'est pas null
           const category = p.tax_categorie_id ? await getTaxCategorieById(p.tax_categorie_id) : null;
           const type = await getTaxTypeById(p.tax_type_id);
+          let installment_paid_amount: number | undefined;
+          let installment_paid_count: number | undefined;
+          let installment_complete: boolean | undefined;
+          if (p.installment_group_id) {
+            const summary = await getInstallmentGroupSummary(p.installment_group_id);
+            if (summary) {
+              installment_paid_amount = summary.paidAmount;
+              installment_paid_count = summary.paidCount;
+              installment_complete = summary.isComplete;
+            }
+          }
           return {
             ...p,
             categoryLabel: category?.label || 'Taxe directe',
             typeLabel: type?.label || 'N/A',
+            installment_paid_amount,
+            installment_paid_count,
+            installment_complete,
           };
         })
       );
@@ -149,11 +166,21 @@ export const HistoryScreen: React.FC<Props> = ({ navigation }) => {
     >
       <View style={styles.paymentHeader}>
         <View style={styles.paymentInfo}>
-          <Text style={styles.payerName}>{item.payer_name}</Text>
-          <Text style={styles.paymentType}>
-            {item.typeLabel}
-            {item.installment_number ? ` • Tranche ${item.installment_number}/${item.installment_total}` : ''}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={styles.payerName}>{item.payer_name}</Text>
+            {item.installment_number ? (
+              <View style={{ backgroundColor: '#1a73e820', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#1a73e8' }}>
+                  TRANCHE {item.installment_number}/{item.installment_total}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ backgroundColor: '#34a85320', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: '#34a853' }}>TOTAL</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.paymentType}>{item.typeLabel}</Text>
         </View>
         <View style={styles.paymentAmount}>
           <Text style={styles.amountText}>{formatCurrency(item.total_amount)}</Text>
@@ -174,6 +201,19 @@ export const HistoryScreen: React.FC<Props> = ({ navigation }) => {
           </>
         )}
       </View>
+      {/* Résumé tranche */}
+      {item.installment_number && item.installment_paid_amount != null && (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingBottom: 8 }}>
+          <Text style={{ fontSize: 11, color: '#34a853' }}>
+            Payé : {formatCurrency(item.installment_paid_amount)} ({item.installment_paid_count}/{item.installment_total})
+          </Text>
+          <Text style={{ fontSize: 11, color: item.installment_complete ? '#34a853' : '#ea4335' }}>
+            {item.installment_complete
+              ? 'Complet ✓'
+              : `Reste : ${item.installment_total! - item.installment_paid_count!} tranche(s)`}
+          </Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 

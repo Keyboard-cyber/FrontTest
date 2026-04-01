@@ -52,7 +52,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [userRole, setUserRole] = useState<'agent' | 'controleur' | null>(null);
-  const tokenCheckIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const tokenCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Fonction pour gérer la déconnexion silencieuse (token expiré)
   const handleTokenExpired = async () => {
@@ -379,7 +379,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Rôle non autorisé (admin, superadmin, etc.)
         console.error('Rôle non autorisé:', detectedRole);
         apiService.clearToken();
-        return { success: false, error: `Vous n'êtes pas autorisé à utiliser cette application` };
+        return { success: false, error: `Ce rôle n'est pas autorisé pour l'application mobile (votre rôle: ${userData.role})` };
       }
       
       // 4. Récupérer toutes les données initiales de l'agent
@@ -465,25 +465,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       // 7. Sauvegarder les types de taxes
       if (initialData.taxTypes && initialData.taxTypes.length > 0) {
-        console.log('Types de taxes bruts:', JSON.stringify(initialData.taxTypes[0], null, 2));
-        const localTypes: LocalTaxType[] = initialData.taxTypes.map(type => ({
-          tax_type_id: type.id,
-          tax_categorie_id: type.tax_categorie_id ?? null,
-          service_id: type.service_id ?? null,
-          label: type.label || (type as any).name || (type as any).title || '',
-          amount: type.amount ?? null,
-          min_amount: type.min_amount ?? null,
-          max_amount: type.max_amount ?? null,
-          require_chassis_number: type.require_chassis_number ? 1 : 0,
-          require_color: type.require_color ? 1 : 0,
-          sort_order: type.sort_order || 0,
-          is_active: type.is_active ? 1 : 0,
-          created_at: type.created_at || new Date().toISOString(),
-          updated_at: type.updated_at || new Date().toISOString(),
-        }));
-        console.log('Type transformé exemple:', JSON.stringify(localTypes[0], null, 2));
-        await saveTaxTypes(localTypes);
-        console.log(`${localTypes.length} type(s) de taxes sauvegardé(s)`);
+        try {
+          console.log('Types de taxes bruts:', JSON.stringify(initialData.taxTypes[0], null, 2));
+          const localTypes: LocalTaxType[] = initialData.taxTypes.map(type => ({
+            tax_type_id: type.id,
+            tax_categorie_id: type.tax_categorie_id || (type as any).categorie_id || (type as any).category_id,
+            label: type.label || (type as any).name || (type as any).title || '',
+            amount: type.amount || (type as any).price || (type as any).default_amount || 0,
+            min_amount: type.min_amount || (type as any).minimum_amount || null,
+            max_amount: type.max_amount || (type as any).maximum_amount || null,
+            require_chassis_number: type.require_chassis_number ? 1 : 0,
+            require_color: type.require_color ? 1 : 0,
+            sort_order: type.sort_order || (type as any).order || 0,
+            is_active: type.is_active ? 1 : 0,
+            created_at: type.created_at || new Date().toISOString(),
+            updated_at: type.updated_at || new Date().toISOString(),
+          }));
+          console.log('Type transformé exemple:', JSON.stringify(localTypes[0], null, 2));
+          await saveTaxTypes(localTypes);
+          console.log(`${localTypes.length} type(s) de taxes sauvegardé(s)`);
+        } catch (err) {
+          console.error('Erreur SQL lors de la sauvegarde des types de taxes:', err);
+          return { success: false, error: "Erreur interne lors de la sauvegarde des types de taxes. Veuillez réessayer ou contacter le support." };
+        }
       }
 
       // 8. Sauvegarder les credentials pour la reconnexion offline

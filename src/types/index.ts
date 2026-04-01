@@ -164,11 +164,12 @@ export interface Tranche {
   payer_name: string;
   payer_phone: string | null;
   service_id: number;
-  tax_categorie_id: number | null;
+  tax_category_id: number | null;
   tax_type_id: number;
   total_amount: number;
-  installment_count: number;
-  paid_installments: number;
+  total_installments: number;
+  completed_installments: number;
+  remaining_installments: number;
   paid_amount: number;
   remaining_amount: number;
   status: 'pending' | 'partial' | 'completed' | 'cancelled';

@@ -8,6 +8,7 @@ import {
   saveTaxTypes,
   setSyncState,
   getSyncState,
+  getTaxTypeById,
 } from '../database';
 import apiService from './api.service';
 import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue, TaxCategorie, TaxType } from '../types';
@@ -207,43 +208,47 @@ class SyncService {
           try {
             const first = payments[0];
 
-            // Étape 1: Créer la tranche sur le serveur
-            const totalAmount = payments.reduce((sum, p) => sum + p.total_amount, 0);
+            // Étape 1: Créer le dossier tranche sur le serveur (idempotent via installment_group_id)
+            const taxType = await getTaxTypeById(first.tax_type_id);
             const tranche = await apiService.createTranche({
               installment_group_id: groupId,
               payer_name: first.payer_name,
-              payer_phone: first.payer_phone || null,
               service_id: first.service_id,
               tax_category_id: first.tax_categorie_id,
               tax_type_id: first.tax_type_id,
-              total_amount: totalAmount,
-              installment_count: first.installment_total,
-              chassis_number: first.chassis_number || null,
-              vehicle_color: first.vehicle_color || null,
-              user_id: first.user_id,
+              total_amount: taxType?.amount || payments.reduce((sum, p) => sum + p.total_amount, 0),
+              total_installments: first.installment_total,
               terminal_id: first.terminal_id,
             });
 
             console.log('Tranche créée, id:', tranche.id);
 
-            // Étape 2: Sync les paiements avec le tranche_id
-            const serverResult = await apiService.syncTranches({
-              paiements: payments.map(p => ({
-                tranche_id: tranche.id,
-                local_uuid: p.local_uuid,
-                installment_number: p.installment_number,
-                amount: p.total_amount,
-                paid_at: p.paid_at,
-                qr_signature: p.qr_signature,
-                terminal_id: p.terminal_id,
-                user_id: p.user_id,
-              })),
-            });
-
+            // Étape 2: Payer chaque tranche via POST /tranches/{id}/pay
             for (const p of payments) {
-              const sp = (serverResult.paiements || serverResult.payments || [])?.find?.((x: any) => x.local_uuid === p.local_uuid || x.uuid === p.local_uuid);
-              await updatePaymentStatus(p.local_uuid, 'SYNCED', sp?.receipt_no || tranche.reference, sp?.id || tranche.id, sp?.qr_signature);
-              result.synced++;
+              try {
+                const sp = await apiService.payTranche(tranche.id, {
+                  amount: p.total_amount,
+                  terminal_id: p.terminal_id,
+                  paid_at: p.paid_at,
+                  local_uuid: p.local_uuid,
+                  sync_status: 'OFFLINE_SYNCED',
+                  installment_number: p.installment_number,
+                  installment_total: p.installment_total,
+                });
+                await updatePaymentStatus(p.local_uuid, 'SYNCED', sp.receipt_no || tranche.reference, sp.id || tranche.id, sp.qr_signature);
+                result.synced++;
+              } catch (payError: any) {
+                // Vérifier doublon
+                const existing = await apiService.getPaymentByUuid(p.local_uuid);
+                if (existing) {
+                  await updatePaymentStatus(p.local_uuid, 'SYNCED', existing.receipt_no, existing.id, existing.qr_signature);
+                  result.synced++;
+                } else {
+                  await updatePaymentStatus(p.local_uuid, 'FAILED');
+                  result.failed++;
+                  result.errors.push(`Paiement tranche ${p.local_uuid}: ${payError.message}`);
+                }
+              }
             }
           } catch (error: any) {
             console.error(`Erreur sync tranche ${groupId}:`, error);

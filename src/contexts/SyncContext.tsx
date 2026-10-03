@@ -19,7 +19,7 @@ interface SyncContextType {
   categories: LocalTaxCategorie[];
   taxTypes: LocalTaxType[];
   syncAll: () => Promise<void>;
-  syncPayments: () => Promise<{ synced: number; failed: number }>;
+  syncPayments: () => Promise<{ synced: number; failed: number; errors: string[] }>;
   refreshData: () => Promise<void>;
 }
 
@@ -104,7 +104,7 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
         console.log('Sync périodique annulée - utilisateur bloqué');
         return;
       }
-      const pending = await getPendingPayments();
+      const pending = await getPendingPayments(profile?.user_id);
       if (pending.length > 0 && !isSyncing) {
         console.log('Sync périodique - paiements en attente:', pending.length);
         syncPayments();
@@ -123,8 +123,10 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
       const types = await getTaxTypes();
       setTaxTypes(types);
 
-      // Compter les paiements en attente
-      const pending = await getPendingPayments();
+      // Compter les paiements en attente (agent courant uniquement : sinon
+      // pendingCount reste > 0 à cause des paiements d'un autre compte et
+      // la sync automatique se redéclenche en boucle)
+      const pending = await getPendingPayments(profile?.user_id);
       setPendingCount(pending.length);
 
       // Récupérer le dernier timestamp de sync
@@ -163,21 +165,21 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
     }
   }, [isSyncing, refreshData, handleUserBlocked]);
 
-  const syncPayments = useCallback(async (): Promise<{ synced: number; failed: number }> => {
-    if (isSyncing || userBlockedRef.current) return { synced: 0, failed: 0 };
+  const syncPayments = useCallback(async (): Promise<{ synced: number; failed: number; errors: string[] }> => {
+    if (isSyncing || userBlockedRef.current) return { synced: 0, failed: 0, errors: [] };
 
     setIsSyncing(true);
     try {
       const result = await syncService.syncPendingPayments();
-      
+
       // Vérifier si l'utilisateur est bloqué
       if (result.userBlocked) {
         handleUserBlocked(result.errors[0]);
-        return { synced: 0, failed: 0 };
+        return { synced: 0, failed: 0, errors: result.errors };
       }
-      
+
       await refreshData();
-      
+
       // Notifications
       if (result.synced > 0) {
         await notificationService.notifySyncComplete(result.synced);
@@ -185,11 +187,21 @@ export const SyncProvider: React.FC<SyncProviderProps> = ({ children }) => {
       if (result.failed > 0) {
         await notificationService.notifySyncError(result.failed);
       }
-      
-      return { synced: result.synced, failed: result.failed };
+
+      // Les erreurs restaient dans result.errors sans jamais être lues :
+      // l'utilisateur voyait sa file vide sans aucune explication.
+      if (result.errors.length > 0) {
+        Alert.alert(
+          'Synchronisation incomplète',
+          result.errors.slice(0, 3).join('\n\n') +
+            (result.errors.length > 3 ? `\n\n+${result.errors.length - 3} autre(s)` : '')
+        );
+      }
+
+      return { synced: result.synced, failed: result.failed, errors: result.errors };
     } catch (error) {
       console.error('Erreur sync payments:', error);
-      return { synced: 0, failed: 0 };
+      return { synced: 0, failed: 0, errors: [String(error)] };
     } finally {
       setIsSyncing(false);
     }

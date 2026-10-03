@@ -23,6 +23,13 @@ export interface LocalProfile {
   saved_at: string;
 }
 
+export interface LocalService {
+  service_id: number;
+  name: string;
+  code: string | null;
+  saved_at: string;
+}
+
 export interface Terminal {
   id: number;
   terminal_uid: string;

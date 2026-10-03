@@ -2,6 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import { API_CONFIG, ENDPOINTS } from '../config/api';
 import { getLocalProfile } from '../database';
 import { AuthResponse, LoginCredentials, TaxCategorie, TaxType, Payment, User, Terminal, Tranche } from '../types';
+import { toArray, pickAgentTerminal } from '../utils/terminal';
 
 // Interface pour les données initiales de l'agent
 export interface AgentInitialData {
@@ -39,7 +40,7 @@ class ApiService {
       const response = await this.api.get<any>(url);
       const responseData = response.data;
 
-      const items: T[] = responseData.data || responseData || [];
+      const items: T[] = toArray(responseData);
       allItems.push(...items);
 
       if (responseData.meta?.last_page) {
@@ -236,6 +237,32 @@ class ApiService {
     const userResponse = await this.api.get<{ data: User }>(ENDPOINTS.ME);
     const user = userResponse.data.data || userResponse.data;
     console.log('Données utilisateur /me:', JSON.stringify(user, null, 2));
+
+    // Les terminaux de l'agent : /me peut ne pas exposer la relation
+    let rawTerminals: any[] = toArray((user as any).terminals);
+    if (rawTerminals.length === 0) {
+      try {
+// `/terminals` renvoie TOUS les terminaux paginés (50 au total,
+        // per_page 15). Sans filtre serveur on récupère des terminaux sans
+        // propriétaire et on stocke les siens : il faut le user_id.
+        rawTerminals = await this.fetchAllPages(ENDPOINTS.TERMINALS, {
+          user_id: String(user.id),
+        });
+      } catch (e) {
+        console.log('Aucun terminal récupéré pour cet agent');
+      }
+    }
+    console.log(
+      `🖥️ ${rawTerminals.length} terminal(s) reçu(s) : ` +
+        rawTerminals.map((t: any) => `#${t.id ?? t.terminal_id}(owner=${t.user_id ?? t.agent_id ?? t.user?.id})`).join(', ')
+    );
+
+    const terminals = pickAgentTerminal(rawTerminals, user.id);
+    if (terminals.length > 0) {
+      console.log(
+        `✅ Terminal retenu: #${terminals[0]?.id ?? terminals[0]?.terminal_id} ${terminals[0]?.terminal_uid || ''}`
+      );
+    }
     
     // Récupérer tous les services de l'agent
     let services: { id: number; name: string; code: string }[] = (user as any).services || [];
@@ -245,7 +272,7 @@ class ApiService {
       console.log('Pas de services dans /me, tentative via /agent-services...');
       try {
         const servicesResponse = await this.api.get<{ data: any[] }>(ENDPOINTS.AGENT_SERVICES);
-        const agentServicesData = servicesResponse.data.data || servicesResponse.data || [];
+        const agentServicesData = toArray(servicesResponse.data);
         // Extraire les services de la relation pivot
         services = agentServicesData.map((as: any) => as.service || as).filter((s: any) => s && s.id);
         console.log('Services récupérés via /agent-services:', JSON.stringify(services, null, 2));
@@ -254,7 +281,7 @@ class ApiService {
         // Essayer l'endpoint /services avec filtre user
         try {
           const servicesResponse = await this.api.get<{ data: any[] }>(`${ENDPOINTS.SERVICES}?user_id=${user.id}`);
-          services = servicesResponse.data.data || servicesResponse.data || [];
+          services = toArray(servicesResponse.data);
           console.log('Services récupérés via /services:', JSON.stringify(services, null, 2));
         } catch (e2) {
           console.log('Impossible de récupérer les services, utilisation service_id direct');
@@ -363,7 +390,7 @@ class ApiService {
     return {
       user,
       services,
-      terminals: (user as any).terminals || [],
+      terminals,
       taxCategories,
       taxTypes,
     };

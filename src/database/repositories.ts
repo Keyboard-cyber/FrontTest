@@ -1,5 +1,5 @@
 import { getDatabase } from './database';
-import { LocalProfile, LocalTerminal, LocalTaxCategorie, LocalTaxType, LocalPaymentQueue, SyncState } from '../types';
+import { LocalProfile, LocalService, LocalTerminal, LocalTaxCategorie, LocalTaxType, LocalPaymentQueue, SyncState } from '../types';
 
 // ==================== LOCAL PROFILE ====================
 
@@ -43,6 +43,33 @@ export const clearLocalProfile = async (): Promise<void> => {
   await db.runAsync('DELETE FROM local_profile');
 };
 
+// ==================== LOCAL SERVICES ====================
+
+export const saveServices = async (services: LocalService[]): Promise<void> => {
+  const db = await getDatabase();
+
+  await db.runAsync('DELETE FROM local_services');
+
+  for (const service of services) {
+    await db.runAsync(
+      'INSERT OR REPLACE INTO local_services (service_id, name, code, saved_at) VALUES (?, ?, ?, ?)',
+      [service.service_id, service.name, service.code, service.saved_at]
+    );
+  }
+};
+
+export const getServices = async (): Promise<LocalService[]> => {
+  const db = await getDatabase();
+  return await db.getAllAsync(
+    'SELECT service_id, name, code, saved_at FROM local_services ORDER BY name ASC'
+  ) as LocalService[];
+};
+
+export const clearServices = async (): Promise<void> => {
+  const db = await getDatabase();
+  await db.runAsync('DELETE FROM local_services');
+};
+
 // ==================== LOCAL TERMINAL ====================
 
 export const saveLocalTerminal = async (terminal: LocalTerminal): Promise<void> => {
@@ -57,6 +84,20 @@ export const saveLocalTerminal = async (terminal: LocalTerminal): Promise<void> 
 export const getLocalTerminal = async (): Promise<LocalTerminal | null> => {
   const db = await getDatabase();
   const result = await db.getFirstAsync('SELECT * FROM local_terminal LIMIT 1');
+  return (result as LocalTerminal) || null;
+};
+
+// Le terminal doit appartenir à l'agent connecté : sans cette contrainte, un
+// agent sans terminal héritait de l'id d'un autre agent et le backend
+// rejetait le paiement en 403.
+export const getLocalTerminalForUser = async (userId: number): Promise<LocalTerminal | null> => {
+  const db = await getDatabase();
+  // ORDER BY : un agent pouvait avoir plusieurs lignes (ancien terminal
+  // conservé), et LIMIT 1 sans tri renvoyait un terminal arbitraire.
+  const result = await db.getFirstAsync(
+    'SELECT * FROM local_terminal WHERE user_id = ? ORDER BY is_blocked ASC, terminal_id DESC LIMIT 1',
+    [userId]
+  );
   return (result as LocalTerminal) || null;
 };
 
@@ -218,11 +259,34 @@ export const addPaymentToQueue = async (payment: LocalPaymentQueue): Promise<voi
   );
 };
 
-export const getPendingPayments = async (): Promise<LocalPaymentQueue[]> => {
+export const getPendingPayments = async (userId?: number): Promise<LocalPaymentQueue[]> => {
   const db = await getDatabase();
+  // Filtre par agent : sans cela, la file partagee entre agents renvoie
+  // les paiements d'un autre compte (terminal non assigné, mauvais user_id)
+  if (userId !== undefined) {
+    return await db.getAllAsync(
+      "SELECT * FROM local_payments_queue WHERE status = 'PENDING' AND user_id = ? ORDER BY created_at ASC",
+      [userId]
+    ) as LocalPaymentQueue[];
+  }
   return await db.getAllAsync(
     "SELECT * FROM local_payments_queue WHERE status = 'PENDING' ORDER BY created_at ASC"
   ) as LocalPaymentQueue[];
+};
+
+// Les paiements enregistrés avant l'attribution d'un terminal à l'agent
+// portent un terminal_id arbitraire : ils sont rejetés en 403 à l'infini.
+// On les rattache au terminal courant de l'agent pour débloquer la file.
+export const reassignPendingTerminal = async (
+  userId: number,
+  terminalId: number
+): Promise<number> => {
+  const db = await getDatabase();
+  const result = await db.runAsync(
+    `UPDATE local_payments_queue SET terminal_id = ? WHERE user_id = ? AND status = 'PENDING' AND terminal_id != ?`,
+    [terminalId, userId, terminalId]
+  );
+  return result?.changes ?? 0;
 };
 
 export const getAllPayments = async (): Promise<LocalPaymentQueue[]> => {

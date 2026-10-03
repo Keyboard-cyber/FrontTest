@@ -12,9 +12,10 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth, useSync } from '../../src/contexts';
-import { getCategoriesCountByService, getTotalCategoriesCount, getTotalTaxTypesCount } from '../../src/database';
+import { getCategoriesCountByService, getTotalCategoriesCount, getTotalTaxTypesCount, getServices, getLocalTerminalForUser } from '../../src/database';
 import { Colors, Shadows } from '../../src/theme';
 import { scale, rs, rf, rr, hp } from '../../src/utils/responsive';
+import { LocalService, LocalTerminal } from '../../src/types';
 
 export default function ProfileScreen() {
   const { profile, user, logout } = useAuth();
@@ -23,15 +24,20 @@ export default function ProfileScreen() {
   // État pour les stats des données locales
   const [dataStats, setDataStats] = useState<{
     serviceIds: number[];
+    services: LocalService[];
     categoriesPerService: { service_id: number; count: number }[];
     totalCategories: number;
     totalTaxTypes: number;
   }>({
     serviceIds: [],
+    services: [],
     categoriesPerService: [],
     totalCategories: 0,
     totalTaxTypes: 0,
   });
+
+  // Terminal assigné à l'agent
+  const [terminal, setTerminal] = useState<LocalTerminal | null>(null);
 
   // Charger les stats au montage
   useEffect(() => {
@@ -50,12 +56,21 @@ export default function ProfileScreen() {
         }
 
         // Récupérer les comptages
+        const services = await getServices();
         const categoriesPerService = await getCategoriesCountByService();
         const totalCategories = await getTotalCategoriesCount();
         const totalTaxTypes = await getTotalTaxTypesCount();
 
+        // Terminal de l'agent (affiché plus bas)
+        let agentTerminal: LocalTerminal | null = null;
+        if (profile?.user_id) {
+          agentTerminal = await getLocalTerminalForUser(profile.user_id);
+        }
+        setTerminal(agentTerminal);
+
         setDataStats({
           serviceIds,
+          services,
           categoriesPerService,
           totalCategories,
           totalTaxTypes,
@@ -67,6 +82,13 @@ export default function ProfileScreen() {
 
     loadStats();
   }, [profile]);
+
+  // Libellé d'un service : nom si connu, sinon fallback sur l'ID
+  const serviceLabel = (serviceId: number): string => {
+    const service = dataStats.services.find(s => s.service_id === serviceId);
+    if (!service) return `Service #${serviceId}`;
+    return service.code ? `${service.name} (${service.code})` : service.name;
+  };
 
   const handleLogout = () => {
     if (pendingCount > 0) {
@@ -174,6 +196,52 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        {/* Terminal assigné */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Terminal</Text>
+
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <View style={[
+                styles.infoIconContainer,
+                { backgroundColor: terminal ? 'rgba(123, 97, 255, 0.15)' : 'rgba(255, 184, 0, 0.15)' }
+              ]}>
+                <Ionicons
+                  name={terminal ? 'hardware-chip-outline' : 'alert-outline'}
+                  size={18}
+                  color={terminal ? Colors.primary : Colors.warning}
+                />
+              </View>
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Terminal assigné</Text>
+                {terminal ? (
+                  <Text style={styles.infoValue}>
+                    #{terminal.terminal_id}
+                    {terminal.terminal_uid ? ` · ${terminal.terminal_uid}` : ''}
+                  </Text>
+                ) : (
+                  <Text style={[styles.infoValue, { color: Colors.warning }]}>
+                    Aucun terminal · reconnectez-vous
+                  </Text>
+                )}
+              </View>
+              {terminal ? (
+                <View style={[
+                  styles.terminalBadge,
+                  Boolean(terminal.is_blocked) && { backgroundColor: 'rgba(255, 71, 87, 0.15)' }
+                ]}>
+                  <Text style={[
+                    styles.terminalBadgeText,
+                    Boolean(terminal.is_blocked) && { color: Colors.error }
+                  ]}>
+                    {terminal.is_blocked ? 'Bloqué' : 'Actif'}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </View>
+
         {/* Services section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Services & Données</Text>
@@ -184,9 +252,11 @@ export default function ProfileScreen() {
                 <Ionicons name="briefcase-outline" size={18} color={Colors.primary} />
               </View>
               <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Services liés</Text>
+                <Text style={styles.infoLabel}>Services assignés</Text>
                 <Text style={styles.infoValue}>
-                  {dataStats.serviceIds.length} service(s)
+                  {dataStats.services.length > 0
+                    ? dataStats.services.map(s => s.name).join(', ')
+                    : `${dataStats.serviceIds.length} service(s)`}
                 </Text>
               </View>
             </View>
@@ -204,7 +274,16 @@ export default function ProfileScreen() {
                   <Ionicons name="grid-outline" size={18} color={Colors.accentGreen} />
                 </View>
                 <View style={styles.infoContent}>
-                  <Text style={styles.infoLabel}>Service #{item.service_id}</Text>
+                  <View style={styles.infoLabelRow}>
+                    <Text style={styles.infoLabel}>
+                      {serviceLabel(item.service_id)}
+                    </Text>
+                    {item.service_id === profile?.service_id && (
+                      <View style={styles.primaryBadge}>
+                        <Text style={styles.primaryBadgeText}>Principal</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={styles.infoValue}>
                     {item.count} catégorie(s)
                   </Text>
@@ -438,6 +517,34 @@ const styles = StyleSheet.create({
     fontSize: rf.sm,
     color: Colors.textMuted,
     marginBottom: rs.xs,
+  },
+  infoLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rs.sm,
+    marginBottom: rs.xs,
+  },
+  primaryBadge: {
+    backgroundColor: 'rgba(123, 97, 255, 0.15)',
+    paddingHorizontal: rs.sm,
+    paddingVertical: 2,
+    borderRadius: rr.full,
+  },
+  primaryBadgeText: {
+    color: Colors.primary,
+    fontSize: rf.xs,
+    fontWeight: '600',
+  },
+  terminalBadge: {
+    backgroundColor: 'rgba(0, 245, 160, 0.15)',
+    paddingHorizontal: rs.sm,
+    paddingVertical: 2,
+    borderRadius: rr.full,
+  },
+  terminalBadgeText: {
+    color: Colors.success,
+    fontSize: rf.xs,
+    fontWeight: '600',
   },
   infoValue: {
     fontSize: rf.md,

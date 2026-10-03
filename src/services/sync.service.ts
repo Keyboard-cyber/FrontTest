@@ -3,6 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   getLocalProfile,
   getPendingPayments,
+  reassignPendingTerminal,
+  getLocalTerminalForUser,
   updatePaymentStatus,
   saveTaxCategories,
   saveTaxTypes,
@@ -12,6 +14,14 @@ import {
 } from '../database';
 import apiService from './api.service';
 import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue, TaxCategorie, TaxType } from '../types';
+
+// Erreur de configuration : le terminal utilisé n'appartient pas à l'agent
+const isTerminalError = (error: any): boolean => {
+  const message = String(
+    error?.response?.data?.message || error?.response?.data?.error || error?.message || ''
+  ).toLowerCase();
+  return message.includes('terminal');
+};
 
 class SyncService {
   private isSyncing = false;
@@ -142,7 +152,38 @@ class SyncService {
         return result;
       }
 
-      const pendingPayments = await getPendingPayments();
+      // Rattacher les paiements en attente au terminal réellement assigné
+      if (profile?.user_id) {
+        const terminal = await getLocalTerminalForUser(profile.user_id);
+        if (!terminal) {
+          result.errors.push(
+            `Aucun terminal exploitable pour l'agent ${profile.user_id} (absent ou ambigu). Consultez les logs Metro.`
+          );
+        } else {
+          console.log(
+            `🖥️ Terminal local: ${terminal.terminal_id} | bloqué: ${Boolean(terminal.is_blocked)}`
+          );
+          if (!terminal.is_blocked) {
+            const repaired = await reassignPendingTerminal(profile.user_id, terminal.terminal_id);
+            if (repaired > 0) {
+              console.log(
+                `${repaired} paiement(s) en attente rattaché(s) au terminal ${terminal.terminal_id}`
+              );
+            }
+          }
+        }
+      } else {
+        result.errors.push('Profil local absent : agent_id inconnu, synchronisation ignorée');
+        return result;
+      }
+
+      const pendingPayments = await getPendingPayments(profile?.user_id);
+      if (pendingPayments.length > 0) {
+        console.log(
+          `📋 ${pendingPayments.length} paiement(s) en attente | terminal_id: ` +
+            pendingPayments.map((p) => p.terminal_id).join(', ')
+        );
+      }
 
       // Séparer paiements normaux et tranches
       const normalPayments = pendingPayments.filter(p => !p.installment_group_id);
@@ -173,15 +214,33 @@ class SyncService {
           await updatePaymentStatus(payment.local_uuid, 'SYNCED', serverPayment.receipt_no, serverPayment.id, serverPayment.qr_signature);
           result.synced++;
         } catch (error: any) {
-          console.error(`Erreur sync paiement ${payment.local_uuid}:`, error);
           if (error.response) {
-            console.error('Détails:', JSON.stringify(error.response.data, null, 2));
             if (error.response.status === 403 && error.response.data?.force_logout) {
+              console.error(`Erreur sync paiement ${payment.local_uuid}:`, error);
               result.userBlocked = true;
               result.errors.push(error.response.data?.message || 'Compte bloqué');
               break;
             }
           }
+          const terminalError = isTerminalError(error);
+          if (!terminalError) {
+            console.error(`Erreur sync paiement ${payment.local_uuid}:`, error);
+            if (error.response) {
+              console.error('Détails:', JSON.stringify(error.response.data, null, 2));
+            }
+          }
+          // Un terminal non assigné est un problème de configuration : le retry
+          // et la recherche de doublon ne serviront à rien, et marquer le
+          // paiement FAILED le retirerait définitivement de la file.
+          // Erreur attendue et déjà signalée : pas de trace d'erreur bruyante
+          if (isTerminalError(error)) {
+            const detail =
+              error.response?.data?.message || error.response?.data?.error || error.message;
+            result.errors.push(`Terminal non assigné (id ${payment.terminal_id}). ${detail}`);
+            // Laisser en PENDING pour retenter après résolution côté backend
+            continue;
+          }
+
           // Vérifier doublon
           const existing = await apiService.getPaymentByUuid(payment.local_uuid);
           if (existing) {
@@ -205,8 +264,8 @@ class SyncService {
         }
 
         for (const [groupId, payments] of groups) {
+          const first = payments[0];
           try {
-            const first = payments[0];
 
             // Étape 1: Créer le dossier tranche sur le serveur (idempotent via installment_group_id)
             const taxType = await getTaxTypeById(first.tax_type_id);
@@ -216,7 +275,11 @@ class SyncService {
               service_id: first.service_id,
               tax_category_id: first.tax_categorie_id,
               tax_type_id: first.tax_type_id,
-              total_amount: taxType?.amount || payments.reduce((sum, p) => sum + p.total_amount, 0),
+              // Montant global du dossier : unitaire × quantité
+              total_amount:
+                (first.unit_price || 0) * (first.quantity || 1) ||
+                taxType?.amount ||
+                payments.reduce((sum, p) => sum + p.total_amount, 0),
               total_installments: first.installment_total,
               terminal_id: first.terminal_id,
             });
@@ -238,6 +301,16 @@ class SyncService {
                 await updatePaymentStatus(p.local_uuid, 'SYNCED', sp.receipt_no || tranche.reference, sp.id || tranche.id, sp.qr_signature);
                 result.synced++;
               } catch (payError: any) {
+                if (isTerminalError(payError)) {
+                  const detail =
+                    payError.response?.data?.message ||
+                    payError.response?.data?.error ||
+                    payError.message;
+                  result.errors.push(`Terminal non assigné (id ${p.terminal_id}). ${detail}`);
+                  // Rester en PENDING : l'idempotence du dossier est assurée
+                  // par installment_group_id, on retentera après résolution
+                  continue;
+                }
                 // Vérifier doublon
                 const existing = await apiService.getPaymentByUuid(p.local_uuid);
                 if (existing) {
@@ -260,11 +333,20 @@ class SyncService {
                 break;
               }
             }
-            for (const p of payments) {
-              await updatePaymentStatus(p.local_uuid, 'FAILED');
-              result.failed++;
+            // Un terminal non assigné laisse le dossier et les tranches en PENDING
+            if (isTerminalError(error)) {
+              const detail =
+                error.response?.data?.message || error.response?.data?.error || error.message;
+              result.errors.push(`Terminal non assigné (id ${first.terminal_id}). ${detail}`);
+            } else {
+              const detail =
+                error.response?.data?.message || error.response?.data?.error || error.message;
+              for (const p of payments) {
+                await updatePaymentStatus(p.local_uuid, 'FAILED');
+                result.failed++;
+              }
+              result.errors.push(`Tranche ${groupId}: ${detail}`);
             }
-            result.errors.push(`Tranche ${groupId}: ${error.message}`);
           }
         }
       }

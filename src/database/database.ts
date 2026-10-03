@@ -4,26 +4,108 @@ import { CREATE_TABLES_SQL, CREATE_INDEXES_SQL } from './schema';
 const DB_NAME = 'taxe_agent_v5.db'; // Version 5 - ajout service_id pour taxes directes
 
 let db: any = null;
+let dbPromise: Promise<any> | null = null;
 
 // Vérifier si on est sur le web
 const isWeb = Platform.OS === 'web';
+
+const RECOVERABLE_METHODS = new Set([
+  'execAsync',
+  'runAsync',
+  'getAllAsync',
+  'getFirstAsync',
+]);
+
+const isPoisonedConnectionError = (error: any): boolean => {
+  const message = error?.message;
+  return (
+    typeof message === 'string' &&
+    message.includes('NativeDatabase') &&
+    message.includes('NullPointerException')
+  );
+};
+
+const openNativeDatabase = async (useNewConnection: boolean): Promise<any> => {
+  const module: any = await import('expo-sqlite');
+  const openDatabaseAsync: any =
+    module?.openDatabaseAsync ?? module?.default?.openDatabaseAsync;
+
+  if (typeof openDatabaseAsync !== 'function') {
+    throw new Error(
+      `expo-sqlite: openDatabaseAsync introuvable (clés: ${Object.keys(
+        module ?? {}
+      ).join(', ')})`
+    );
+  }
+
+  return useNewConnection
+    ? openDatabaseAsync(DB_NAME, { useNewConnection: true })
+    : openDatabaseAsync(DB_NAME);
+};
+
+const storeDatabase = (raw: any): any => {
+  db = wrapDatabase(raw);
+  dbPromise = Promise.resolve(db);
+  return db;
+};
+
+const wrapDatabase = (raw: any): any =>
+  new Proxy(raw, {
+    get(target, prop) {
+      const value = target[prop as string];
+      if (typeof value !== 'function') {
+        return value;
+      }
+      if (!RECOVERABLE_METHODS.has(prop as string)) {
+        return value.bind(target);
+      }
+
+      return async (...args: any[]) => {
+        try {
+          return await value.apply(target, args);
+        } catch (error) {
+          if (!isPoisonedConnectionError(error)) {
+            throw error;
+          }
+          console.warn(
+            '[database] Connexion SQLite invalide, réouverture avec useNewConnection...'
+          );
+          const fresh = await openNativeDatabase(true);
+          storeDatabase(fresh);
+          return await (fresh[prop as string] as Function).apply(fresh, args);
+        }
+      };
+    },
+  });
 
 export const getDatabase = async (): Promise<any> => {
   if (db) {
     return db;
   }
-  
+
   if (isWeb) {
     // Sur le web, utiliser un mock en mémoire
     console.log('Running on web - using in-memory storage');
     db = createWebMockDb();
+    dbPromise = Promise.resolve(db);
     return db;
   }
-  
-  // Sur mobile, utiliser expo-sqlite
-  const SQLite = await import('expo-sqlite');
-  db = await SQLite.openDatabaseAsync(DB_NAME);
-  return db;
+
+  // Mémoïse la promesse d'ouverture : un seul wrapper NativeDatabase doit
+  // exister, sinon le GC du doublon détruit le binding C++ partagé et plus
+  // aucun prepareAsync ne fonctionne (NPE) sur Android.
+  if (!dbPromise) {
+    dbPromise = openNativeDatabase(false)
+      .then(storeDatabase)
+      .catch((error) => {
+        // Ne pas conserver une promesse rejetée, sinon plus aucun appel
+        // suivant ne peut aboutir.
+        dbPromise = null;
+        throw error;
+      });
+  }
+
+  return dbPromise;
 };
 
 // Mock DB pour le web (stockage en mémoire avec localStorage)
@@ -243,5 +325,6 @@ export const closeDatabase = async (): Promise<void> => {
   if (db) {
     await db.closeAsync();
     db = null;
+    dbPromise = null;
   }
 };

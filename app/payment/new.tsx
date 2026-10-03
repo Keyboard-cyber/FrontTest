@@ -21,13 +21,37 @@ import { notificationService } from '../../src/services/notification.service';
 import { 
   getTaxCategories, 
   getTaxTypes, 
+  getServices,
+  getServiceIds,
   addPaymentToQueue,
-  getLocalTerminal,
+  getLocalTerminalForUser,
   getIncompleteInstallment,
 } from '../../src/database';
-import { LocalTaxCategorie, LocalTaxType, LocalPaymentQueue } from '../../src/types';
+import { LocalService, LocalTaxCategorie, LocalTaxType, LocalPaymentQueue } from '../../src/types';
 import { Colors, Shadows } from '../../src/theme';
 import { scale, rs, rf, rr, wp } from '../../src/utils/responsive';
+
+const MAX_QUANTITY = 999;
+const MAX_QUANTITY_INPUT_LENGTH = String(MAX_QUANTITY).length;
+
+const MIN_INSTALLMENT_TOTAL = 2;
+const MAX_INSTALLMENT_TOTAL = 12;
+const INSTALLMENT_INPUT_LENGTH = String(MAX_INSTALLMENT_TOTAL).length;
+
+type Step = 'service' | 'directType' | 'category' | 'type' | 'details' | 'confirm';
+
+const DIRECT_TAX_FLOW: Step[] = ['service', 'directType', 'category', 'type', 'details', 'confirm'];
+const CATEGORY_FLOW: Step[] = ['service', 'category', 'type', 'details', 'confirm'];
+const DIRECT_ONLY_FLOW: Step[] = ['service', 'directType', 'type', 'details', 'confirm'];
+const SINGLE_SERVICE_FLOW: Step[] = ['category', 'type', 'details', 'confirm'];
+const SINGLE_DIRECT_FLOW: Step[] = ['directType', 'type', 'details', 'confirm'];
+
+// Une taxe directe n'appartient à aucune catégorie
+const isDirectTaxType = (type: LocalTaxType): boolean =>
+  type.tax_categorie_id === null || type.tax_categorie_id === 0;
+
+const hasDirectTaxes = (types: LocalTaxType[], service: LocalService): boolean =>
+  types.some((t) => t.service_id === service.service_id && isDirectTaxType(t));
 
 export default function NewPaymentScreen() {
   const { profile } = useAuth();
@@ -37,29 +61,62 @@ export default function NewPaymentScreen() {
   const [categories, setCategories] = useState<LocalTaxCategorie[]>([]);
   const [taxTypes, setTaxTypes] = useState<LocalTaxType[]>([]);
   const [filteredTaxTypes, setFilteredTaxTypes] = useState<LocalTaxType[]>([]);
+  const [services, setServices] = useState<LocalService[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   // Form state
+  const [selectedService, setSelectedService] = useState<LocalService | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<LocalTaxCategorie | null>(null);
   const [selectedTaxType, setSelectedTaxType] = useState<LocalTaxType | null>(null);
   const [payerName, setPayerName] = useState('');
   const [payerPhone, setPayerPhone] = useState('');
   const [customAmount, setCustomAmount] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [quantityInput, setQuantityInput] = useState('1');
   const [chassisNumber, setChassisNumber] = useState('');
   const [vehicleColor, setVehicleColor] = useState('');
   
   // Paiement par tranche
   const [isInstallment, setIsInstallment] = useState(false);
-  const [installmentTotal, setInstallmentTotal] = useState(2);
+  const [installmentTotal, setInstallmentTotal] = useState(MIN_INSTALLMENT_TOTAL);
+  const [installmentNumberInput, setInstallmentNumberInput] = useState('1');
+  const [installmentTotalInput, setInstallmentTotalInput] = useState(String(MIN_INSTALLMENT_TOTAL));
   const [installmentNumber, setInstallmentNumber] = useState(1);
   const [installmentAmount, setInstallmentAmount] = useState('');
+  const [installmentAmountTouched, setInstallmentAmountTouched] = useState(false);
   // Tranche existante en cours de complétion
   const [existingGroupId, setExistingGroupId] = useState<string | null>(null);
   const [isContinuation, setIsContinuation] = useState(false);
 
   // Étape du formulaire
-  const [step, setStep] = useState<'category' | 'type' | 'details' | 'confirm'>('category');
+  const [step, setStep] = useState<Step>('service');
+
+  // L'étape service n'a de sens que si l'agent est rattaché à plusieurs services
+  const hasServiceStep = services.length > 1;
+
+  // Taxes directes (sans catégorie) et catégories du service sélectionné
+  const directTaxTypes = selectedService
+    ? taxTypes.filter((t) => t.service_id === selectedService.service_id && isDirectTaxType(t))
+    : [];
+  const visibleCategories = selectedService
+    ? categories.filter((cat) => cat.service_id === selectedService.service_id)
+    : categories;
+
+  // Un service qui n'a que des taxes directes saute l'étape catégories
+  const skipCategoryStep = Boolean(selectedService) && visibleCategories.length === 0;
+
+  const progressSteps = !selectedService
+    ? hasServiceStep
+      ? CATEGORY_FLOW
+      : SINGLE_SERVICE_FLOW
+    : hasServiceStep
+    ? skipCategoryStep
+      ? DIRECT_ONLY_FLOW
+      : DIRECT_TAX_FLOW
+    : skipCategoryStep
+    ? SINGLE_DIRECT_FLOW
+    : SINGLE_SERVICE_FLOW;
 
   useEffect(() => {
     loadData();
@@ -67,21 +124,88 @@ export default function NewPaymentScreen() {
 
   const loadData = async () => {
     try {
-      // Récupérer TOUTES les catégories stockées localement
-      // (elles sont déjà filtrées par les services de l'agent lors de la sync)
-      const cats = await getTaxCategories();
+      // Services assignés à l'agent (noms via local_services, ids via le profil)
+      const [storedServices, assignedIds] = await Promise.all([
+        getServices(),
+        getServiceIds(),
+      ]);
+
+      const assignedIdSet = new Set(assignedIds);
+      const knownServices =
+        storedServices.length > 0
+          ? storedServices
+          : assignedIds.map((id) => ({
+              service_id: id,
+              name: `Service #${id}`,
+              code: '',
+              saved_at: '',
+            }));
+
+      const assignedServices =
+        assignedIds.length > 0
+          ? knownServices.filter((s) => assignedIdSet.has(s.service_id))
+          : knownServices;
+
+      assignedServices.sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+      setServices(assignedServices);
+      console.log(`Chargé ${assignedServices.length} services assignés`);
+
+      // Un seul service : pas d'étape de sélection, on enchaîne directement
+      const preselected = assignedServices.length === 1 ? assignedServices[0] : null;
+      setSelectedService(preselected);
+
+      // Elles sont déjà filtrées par les services de l'agent lors de la sync
+      const serviceFilter = assignedServices.length > 0
+        ? assignedServices.map((s) => s.service_id)
+        : undefined;
+
+      const [cats, types] = await Promise.all([
+        getTaxCategories(serviceFilter),
+        getTaxTypes(),
+      ]);
       console.log(`Chargé ${cats.length} catégories de taxes`);
       setCategories(cats);
-      
-      const types = await getTaxTypes();
-      console.log(`Chargé ${types.length} types de taxes`);
       setTaxTypes(types);
+      console.log(`Chargé ${types.length} types de taxes`);
+
+      // Point d'entrée : service à choisir si l'agent est rattaché à plusieurs
+      // services, taxes directes si le service en propose, sinon les catégories.
+      // Sans service assigné, on retombe sur toutes les catégories.
+      if (assignedServices.length > 1) {
+        setStep('service');
+      } else if (preselected && hasDirectTaxes(types, preselected)) {
+        setStep('directType');
+      } else {
+        setStep('category');
+      }
     } catch (error) {
       console.error('Erreur chargement données:', error);
       Alert.alert('Erreur', 'Impossible de charger les données');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleServiceSelect = (service: LocalService) => {
+    setSelectedService(service);
+    setSelectedCategory(null);
+    setSelectedTaxType(null);
+    setFilteredTaxTypes([]);
+    // Taxes directes d'abord si le service en propose, sinon les catégories
+    setStep(hasDirectTaxes(taxTypes, service) ? 'directType' : 'category');
+  };
+
+  // Une taxe directe n'a pas de catégorie : on enchaîne sur les détails
+  const handleDirectTypeSelect = (taxType: LocalTaxType) => {
+    setSelectedCategory(null);
+    handleTaxTypeSelect(taxType);
+  };
+
+  // Passage direct → catégories quand le service en propose aussi
+  const handleContinueToCategories = () => {
+    setSelectedCategory(null);
+    setSelectedTaxType(null);
+    setStep('category');
   };
 
   const handleCategorySelect = (category: LocalTaxCategorie) => {
@@ -100,9 +224,11 @@ export default function NewPaymentScreen() {
     setExistingGroupId(null);
     setIsContinuation(false);
     setIsInstallment(false);
-    setInstallmentNumber(1);
-    setInstallmentTotal(2);
+    setInstallmentTotalValue(MIN_INSTALLMENT_TOTAL);
+    setInstallmentNumberValue(1);
     setInstallmentAmount('');
+    setInstallmentAmountTouched(false);
+    setQuantityValue(1);
     setStep('details');
   };
 
@@ -124,8 +250,8 @@ export default function NewPaymentScreen() {
                 setIsInstallment(true);
                 setIsContinuation(true);
                 setExistingGroupId(result.groupId);
-                setInstallmentNumber(nextNumber);
-                setInstallmentTotal(result.total);
+                setInstallmentTotalValue(result.total);
+                setInstallmentNumberValue(nextNumber);
                 // Pré-remplir le montant de la tranche avec celui de la dernière tranche payée
                 const lastPayment = result.payments[result.payments.length - 1];
                 if (lastPayment) {
@@ -141,13 +267,97 @@ export default function NewPaymentScreen() {
     }
   };
 
-  const calculateTotal = (): number => {
-    if (isInstallment && installmentAmount) {
-      return parseFloat(installmentAmount) || 0;
-    }
-    const amount = parseFloat(customAmount) || 0;
-    return amount;
+  // Prix unitaire de la taxe : le montant saisi, jamais celui d'une tranche
+  const unitPrice = (): number => parseFloat(customAmount) || 0;
+
+  // Montant global de la facture : unitaire × quantité
+  const billTotal = (): number => unitPrice() * quantity;
+
+  // Montant réellement encaissé par ce paiement
+  const collectedAmount = (): number =>
+    isInstallment ? parseFloat(installmentAmount) || 0 : billTotal();
+
+  const clampQuantity = (value: number): number =>
+    Math.min(MAX_QUANTITY, Math.max(1, value));
+
+  // Les boutons −/+ et la saisie manuelle passent par ici pour rester synchro
+  const setQuantityValue = (value: number) => {
+    const clamped = clampQuantity(value);
+    setQuantity(clamped);
+    setQuantityInput(String(clamped));
   };
+
+  const handleQuantityChange = (text: string) => {
+    const digits = text.replace(/[^0-9]/g, '');
+    // Champ vidé : on tolère l'état vide le temps de la saisie
+    if (digits === '') {
+      setQuantityInput('');
+      setQuantity(1);
+      return;
+    }
+    setQuantityValue(parseInt(digits, 10));
+  };
+
+  // Le numéro de tranche ne peut pas dépasser le nombre total de tranches
+  const setInstallmentNumberValue = (value: number) => {
+    const clamped = Math.min(installmentTotal, Math.max(1, value));
+    setInstallmentNumber(clamped);
+    setInstallmentNumberInput(String(clamped));
+  };
+
+  // Réduire le total recale le numéro de tranche s'il dépasse
+  const setInstallmentTotalValue = (value: number) => {
+    const clamped = Math.min(MAX_INSTALLMENT_TOTAL, Math.max(MIN_INSTALLMENT_TOTAL, value));
+    setInstallmentTotal(clamped);
+    setInstallmentTotalInput(String(clamped));
+    if (installmentNumber > clamped) {
+      setInstallmentNumber(clamped);
+      setInstallmentNumberInput(String(clamped));
+    }
+  };
+
+  const handleInstallmentNumberChange = (text: string) => {
+    const digits = text.replace(/[^0-9]/g, '');
+    if (digits === '') {
+      setInstallmentNumberInput('');
+      setInstallmentNumber(1);
+      return;
+    }
+    setInstallmentNumberValue(parseInt(digits, 10));
+  };
+
+  const handleInstallmentTotalChange = (text: string) => {
+    const digits = text.replace(/[^0-9]/g, '');
+    if (digits === '') {
+      setInstallmentTotalInput('');
+      setInstallmentTotal(MIN_INSTALLMENT_TOTAL);
+      return;
+    }
+    setInstallmentTotalValue(parseInt(digits, 10));
+  };
+
+  // Part de tranche : montant global (unitaire × quantité) divisé par le nombre
+  // de tranches. L'agent reste libre de la modifier manuellement.
+  const suggestedInstallmentAmount = (): number => {
+    const total = billTotal();
+    if (total <= 0) return 0;
+    if (isContinuation) return 0;
+    return Math.max(1, Math.floor((total / installmentTotal) * 100) / 100);
+  };
+
+  // La tranche se recalcule sur le montant global tant que l'agent ne l'a pas saisie
+  useEffect(() => {
+    if (!isInstallment) return;
+    setInstallmentAmountTouched(false);
+  }, [customAmount, quantity, installmentTotal, isInstallment]);
+
+  useEffect(() => {
+    if (!isInstallment || installmentAmountTouched || isContinuation) return;
+    const suggested = suggestedInstallmentAmount();
+    setInstallmentAmount(suggested > 0 ? String(suggested) : '');
+  }, [isInstallment, installmentAmountTouched, customAmount, quantity, installmentTotal, isContinuation]);
+
+  const calculateTotal = (): number => collectedAmount();
 
   const validateForm = (): boolean => {
     if (!payerName.trim()) {
@@ -165,6 +375,16 @@ export default function NewPaymentScreen() {
       return false;
     }
 
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      Alert.alert('Erreur', 'La quantité doit être un entier supérieur ou égal à 1');
+      return false;
+    }
+    if (quantity > MAX_QUANTITY) {
+      Alert.alert('Erreur', `La quantité ne peut pas dépasser ${MAX_QUANTITY}`);
+      return false;
+    }
+
+    // min_amount / max_amount portent sur le prix unitaire de la taxe
     if (selectedTaxType.min_amount && amount < selectedTaxType.min_amount) {
       Alert.alert('Erreur', `Le montant minimum est ${selectedTaxType.min_amount}`);
       return false;
@@ -188,11 +408,20 @@ export default function NewPaymentScreen() {
     if (isInstallment) {
       const trancheAmount = parseFloat(installmentAmount);
       if (isNaN(trancheAmount) || trancheAmount <= 0) {
-        Alert.alert('Erreur', 'Veuillez entrer le montant de la tranche');
+        Alert.alert('Erreur', 'Veuillez entrer un montant de tranche valide');
         return false;
       }
-      if (trancheAmount >= parseFloat(customAmount)) {
-        Alert.alert('Erreur', 'Le montant de la tranche doit être inférieur au montant total');
+      // Montant global = unitaire × quantité, base du découpage en tranches
+      const total = billTotal();
+      if (total <= 0) {
+        Alert.alert('Erreur', 'Le montant global doit être supérieur à zéro');
+        return false;
+      }
+      if (trancheAmount >= total) {
+        Alert.alert(
+          'Erreur',
+          `Le montant de la tranche doit être inférieur au montant global (${formatCurrency(total)})`
+        );
         return false;
       }
     }
@@ -201,16 +430,30 @@ export default function NewPaymentScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!validateForm() || !profile || !selectedCategory || !selectedTaxType) return;
+    if (!validateForm() || !profile || !selectedTaxType) return;
+    if (!selectedService && !selectedCategory) return;
 
     setIsSaving(true);
     try {
       const now = new Date().toISOString();
-      const fullAmount = parseFloat(customAmount);
-      const unitPrice = isInstallment ? parseFloat(installmentAmount) : fullAmount;
+      // unit_price = prix unitaire de la taxe, total_amount = montant encaissé
+      // (la tranche en mode installment, sinon unitaire × quantité)
+      const qty = quantity;
+      const unitPriceValue = unitPrice();
+      const totalAmount = collectedAmount();
       
-      const terminal = await getLocalTerminal();
-      const terminalId = terminal?.terminal_id || 1;
+      // Un agent sans terminal assigné ne peut pas encaisser : on bloque
+      // explicitement plutôt que d'envoyer un terminal_id arbitraire.
+      const terminal = await getLocalTerminalForUser(profile.user_id);
+      if (!terminal) {
+        throw new Error(
+          'Aucun terminal assigné. Synchronisez votre compte ou contactez votre administrateur pour obtenir un terminal.'
+        );
+      }
+      if (terminal.is_blocked) {
+        throw new Error('Ce terminal est bloqué. Contactez votre administrateur.');
+      }
+      const terminalId = terminal.terminal_id;
 
       // Générer un group_id commun si paiement par tranche
       const installmentGroupId = isInstallment
@@ -222,18 +465,18 @@ export default function NewPaymentScreen() {
         local_uuid: uuid,
         payer_name: payerName.trim(),
         payer_phone: payerPhone.trim() || null,
-        service_id: profile.service_id,
-        tax_categorie_id: selectedCategory.tax_categorie_id,
+        service_id: selectedService?.service_id ?? selectedCategory?.service_id ?? profile.service_id,
+        tax_categorie_id: selectedCategory?.tax_categorie_id ?? null,
         tax_type_id: selectedTaxType.tax_type_id,
-        quantity: 1,
-        unit_price: unitPrice,
-        total_amount: unitPrice,
+        quantity: qty,
+        unit_price: unitPriceValue,
+        total_amount: totalAmount,
         chassis_number: chassisNumber.trim() || null,
         vehicle_color: vehicleColor.trim() || null,
         paid_at: now,
         user_id: profile.user_id,
         terminal_id: terminalId,
-        qr_signature: `${uuid}|${unitPrice}|${now}|${profile.user_id}`,
+        qr_signature: `${uuid}|${totalAmount}|${now}|${profile.user_id}`,
         status: 'PENDING',
         server_receipt_no: null,
         server_payment_id: null,
@@ -250,7 +493,7 @@ export default function NewPaymentScreen() {
       addPaymentToUI(payment);
       
       // Notification locale
-      await notificationService.notifyPaymentSuccess(unitPrice, payerName);
+      await notificationService.notifyPaymentSuccess(totalAmount, payerName);
       
       // 2. Synchroniser OBLIGATOIREMENT avant impression
       let syncSuccess = false;
@@ -290,9 +533,10 @@ export default function NewPaymentScreen() {
         pathname: '/payment/preview/[uuid]',
         params: { uuid: uuid }
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erreur enregistrement:', error);
-      Alert.alert('Erreur', 'Impossible d\'enregistrer le paiement');
+      // Les erreurs métier (terminal absent, blocage) portent leur message
+      Alert.alert('Erreur', error?.message || 'Impossible d\'enregistrer le paiement');
     } finally {
       setIsSaving(false);
     }
@@ -304,15 +548,22 @@ export default function NewPaymentScreen() {
     setPayerName('');
     setPayerPhone('');
     setCustomAmount('');
+    setQuantityValue(1);
     setChassisNumber('');
     setVehicleColor('');
     setIsInstallment(false);
-    setInstallmentTotal(2);
-    setInstallmentNumber(1);
+    setInstallmentTotalValue(MIN_INSTALLMENT_TOTAL);
+    setInstallmentNumberValue(1);
     setInstallmentAmount('');
+    setInstallmentAmountTouched(false);
     setExistingGroupId(null);
     setIsContinuation(false);
-    setStep('category');
+    // Le service choisi est conservé quand il n'y en a qu'un (préalélectionné)
+    if (hasServiceStep) {
+      setSelectedService(null);
+      setFilteredTaxTypes([]);
+    }
+    setStep(progressSteps[0]);
   };
 
   const formatCurrency = (amount: number) => {
@@ -333,6 +584,104 @@ export default function NewPaymentScreen() {
 
   const renderStep = () => {
     switch (step) {
+      case 'service':
+        return (
+          <ScrollView 
+            style={styles.stepContainer} 
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
+          >
+            <Text style={styles.stepTitle}>Service</Text>
+            <Text style={styles.stepSubtitle}>Sélectionnez le service pour afficher ses catégories</Text>
+            {services.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Ionicons name="business-outline" size={48} color={Colors.textMuted} />
+                <Text style={styles.emptyText}>Aucun service assigné</Text>
+              </View>
+            ) : (
+              services.map((service) => (
+              <TouchableOpacity
+                key={service.service_id}
+                style={styles.optionCard}
+                onPress={() => handleServiceSelect(service)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.optionIconContainer}>
+                  <Ionicons name="business-outline" size={22} color={Colors.primary} />
+                </View>
+                <View style={styles.optionContent}>
+                  <Text style={styles.optionText}>{service.name}</Text>
+                  {service.code ? (
+                    <Text style={styles.optionAmount}>{service.code}</Text>
+                  ) : null}
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
+              </TouchableOpacity>
+            ))
+            )}
+          </ScrollView>
+        );
+
+      case 'directType':
+        return (
+          <ScrollView 
+            style={styles.stepContainer} 
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
+          >
+            {hasServiceStep ? (
+              <TouchableOpacity style={styles.backButton} onPress={() => setStep('service')}>
+                <Ionicons name="arrow-back" size={20} color={Colors.primary} />
+                <Text style={styles.backText}>Changer de service</Text>
+              </TouchableOpacity>
+            ) : null}
+            <Text style={styles.stepTitle}>Taxe directe</Text>
+            <Text style={styles.stepSubtitle}>
+              {selectedService
+                ? `${selectedService.name} · Taxes sans catégorie`
+                : 'Sélectionnez une taxe directe'}
+            </Text>
+            {directTaxTypes.map((type) => (
+              <TouchableOpacity
+                key={type.tax_type_id}
+                style={styles.optionCard}
+                onPress={() => handleDirectTypeSelect(type)}
+                activeOpacity={0.7}
+              >
+                <View style={[styles.optionIconContainer, { backgroundColor: 'rgba(0, 245, 160, 0.15)' }]}>
+                  <Ionicons name="flash-outline" size={22} color={Colors.accentGreen} />
+                </View>
+                <View style={styles.optionContent}>
+                  <Text style={styles.optionText}>{type.label}</Text>
+                  {type.amount ? (
+                    <Text style={styles.optionAmount}>{formatCurrency(type.amount)}</Text>
+                  ) : null}
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.textMuted} />
+              </TouchableOpacity>
+            ))}
+            {/* Les taxes directes n'ont pas de catégorie, mais le service peut
+                en proposer d'autres : sans ce bouton l'étape catégories était
+                inaccessible depuis l'écran des taxes directes. */}
+            {visibleCategories.length > 0 ? (
+              <TouchableOpacity
+                style={styles.continueCard}
+                onPress={handleContinueToCategories}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="folder-outline" size={22} color={Colors.primary} />
+                <View style={styles.optionContent}>
+                  <Text style={styles.continueText}>Voir les autres catégories</Text>
+                  <Text style={styles.continueSubtext}>
+                    {visibleCategories.length} catégorie(s) sur ce service
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={Colors.primary} />
+              </TouchableOpacity>
+            ) : null}
+          </ScrollView>
+        );
+
       case 'category':
         return (
           <ScrollView 
@@ -340,15 +689,30 @@ export default function NewPaymentScreen() {
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ padding: rs.lg, paddingBottom: 40 }}
           >
+            {directTaxTypes.length > 0 ? (
+              <TouchableOpacity style={styles.backButton} onPress={() => setStep('directType')}>
+                <Ionicons name="arrow-back" size={20} color={Colors.primary} />
+                <Text style={styles.backText}>Taxes directes</Text>
+              </TouchableOpacity>
+            ) : hasServiceStep ? (
+              <TouchableOpacity style={styles.backButton} onPress={() => setStep('service')}>
+                <Ionicons name="arrow-back" size={20} color={Colors.primary} />
+                <Text style={styles.backText}>Changer de service</Text>
+              </TouchableOpacity>
+            ) : null}
             <Text style={styles.stepTitle}>Catégorie</Text>
-            <Text style={styles.stepSubtitle}>Sélectionnez une catégorie de taxe</Text>
-            {categories.length === 0 ? (
+            <Text style={styles.stepSubtitle}>
+              {selectedService
+                ? `${selectedService.name} · Sélectionnez une catégorie de taxe`
+                : 'Sélectionnez une catégorie de taxe'}
+            </Text>
+            {visibleCategories.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Ionicons name="folder-open-outline" size={48} color={Colors.textMuted} />
-                <Text style={styles.emptyText}>Aucune catégorie disponible</Text>
+                <Text style={styles.emptyText}>Aucune catégorie disponible pour ce service</Text>
               </View>
             ) : (
-              categories.map((cat) => (
+              visibleCategories.map((cat) => (
                 <TouchableOpacity
                   key={cat.tax_categorie_id}
                   style={styles.optionCard}
@@ -459,13 +823,57 @@ export default function NewPaymentScreen() {
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Montant *</Text>
+                <Text style={styles.label}>Montant unitaire *</Text>
                 <View style={[styles.inputWrapper, { backgroundColor: Colors.border }]}>
                   <Text style={styles.currencyPrefix}>FC</Text>
                   <Text style={[styles.input, { color: Colors.textPrimary, paddingVertical: rs.md }]}>
                     {formatCurrency(parseFloat(customAmount) || 0)}
                   </Text>
                 </View>
+              </View>
+
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Quantité *</Text>
+                <View style={styles.installmentCounter}>
+                  <TouchableOpacity
+                    style={styles.counterButton}
+                    onPress={() => setQuantityValue(quantity - 1)}
+                    disabled={quantity <= 1}
+                  >
+                    <Ionicons
+                      name="remove"
+                      size={18}
+                      color={quantity <= 1 ? Colors.textMuted : Colors.primary}
+                    />
+                  </TouchableOpacity>
+                  <TextInput
+                    style={styles.counterInput}
+                    value={quantityInput}
+                    onChangeText={handleQuantityChange}
+                    editable
+                    keyboardType="number-pad"
+                    maxLength={MAX_QUANTITY_INPUT_LENGTH}
+                    selectTextOnFocus
+                    placeholder="1"
+                    placeholderTextColor={Colors.textMuted}
+                    accessibilityLabel="Quantité"
+                  />
+                  <TouchableOpacity
+                    style={styles.counterButton}
+                    onPress={() => setQuantityValue(quantity + 1)}
+                    disabled={quantity >= MAX_QUANTITY}
+                  >
+                    <Ionicons
+                      name="add"
+                      size={18}
+                      color={quantity >= MAX_QUANTITY ? Colors.textMuted : Colors.primary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.installmentInfoText}>
+                  Total : {formatCurrency(calculateTotal())}
+                  {isInstallment ? ` · Montant global : ${formatCurrency(billTotal())}` : ''}
+                </Text>
               </View>
 
               <View style={styles.inputGroup}>
@@ -542,15 +950,26 @@ export default function NewPaymentScreen() {
                         <View style={[styles.installmentCounter, isContinuation && { opacity: 0.5 }]}>
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => !isContinuation && setInstallmentNumber(Math.max(1, installmentNumber - 1))}
+                            onPress={() => !isContinuation && setInstallmentNumberValue(installmentNumber - 1)}
                             disabled={isContinuation}
                           >
                             <Ionicons name="remove" size={18} color={Colors.primary} />
                           </TouchableOpacity>
-                          <Text style={styles.counterValue}>{installmentNumber}</Text>
+                          <TextInput
+                            style={styles.counterInput}
+                            value={installmentNumberInput}
+                            onChangeText={handleInstallmentNumberChange}
+                            editable={!isContinuation}
+                            keyboardType="number-pad"
+                            maxLength={INSTALLMENT_INPUT_LENGTH}
+                            selectTextOnFocus
+                            placeholder="1"
+                            placeholderTextColor={Colors.textMuted}
+                            accessibilityLabel="Numéro de tranche"
+                          />
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => !isContinuation && setInstallmentNumber(Math.min(installmentTotal, installmentNumber + 1))}
+                            onPress={() => !isContinuation && setInstallmentNumberValue(installmentNumber + 1)}
                             disabled={isContinuation}
                           >
                             <Ionicons name="add" size={18} color={Colors.primary} />
@@ -562,20 +981,26 @@ export default function NewPaymentScreen() {
                         <View style={[styles.installmentCounter, isContinuation && { opacity: 0.5 }]}>
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => {
-                              if (isContinuation) return;
-                              const newTotal = Math.max(2, installmentTotal - 1);
-                              setInstallmentTotal(newTotal);
-                              if (installmentNumber > newTotal) setInstallmentNumber(newTotal);
-                            }}
+                            onPress={() => !isContinuation && setInstallmentTotalValue(installmentTotal - 1)}
                             disabled={isContinuation}
                           >
                             <Ionicons name="remove" size={18} color={Colors.primary} />
                           </TouchableOpacity>
-                          <Text style={styles.counterValue}>{installmentTotal}</Text>
+                          <TextInput
+                            style={styles.counterInput}
+                            value={installmentTotalInput}
+                            onChangeText={handleInstallmentTotalChange}
+                            editable={!isContinuation}
+                            keyboardType="number-pad"
+                            maxLength={INSTALLMENT_INPUT_LENGTH}
+                            selectTextOnFocus
+                            placeholder={String(MIN_INSTALLMENT_TOTAL)}
+                            placeholderTextColor={Colors.textMuted}
+                            accessibilityLabel="Nombre total de tranches"
+                          />
                           <TouchableOpacity 
                             style={styles.counterButton}
-                            onPress={() => !isContinuation && setInstallmentTotal(Math.min(12, installmentTotal + 1))}
+                            onPress={() => !isContinuation && setInstallmentTotalValue(installmentTotal + 1)}
                             disabled={isContinuation}
                           >
                             <Ionicons name="add" size={18} color={Colors.primary} />
@@ -590,7 +1015,10 @@ export default function NewPaymentScreen() {
                         <TextInput
                           style={styles.input}
                           value={installmentAmount}
-                          onChangeText={setInstallmentAmount}
+                          onChangeText={(text) => {
+                            setInstallmentAmountTouched(true);
+                            setInstallmentAmount(text);
+                          }}
                           placeholder="Montant à payer pour cette tranche"
                           placeholderTextColor={Colors.textMuted}
                           keyboardType="numeric"
@@ -600,7 +1028,8 @@ export default function NewPaymentScreen() {
                     <View style={styles.installmentInfo}>
                       <Ionicons name="information-circle-outline" size={16} color={Colors.textMuted} />
                       <Text style={styles.installmentInfoText}>
-                        Tranche {installmentNumber} sur {installmentTotal} — Montant total : {formatCurrency(parseFloat(customAmount) || 0)}.
+                        Tranche {installmentNumber} sur {installmentTotal} — Montant total :{' '}
+                        {formatCurrency(billTotal())} ({formatCurrency(unitPrice())} × {quantity}).
                       </Text>
                     </View>
                   </View>
@@ -653,9 +1082,15 @@ export default function NewPaymentScreen() {
             <Text style={styles.stepSubtitle}>Vérifiez les informations avant de valider</Text>
 
             <View style={styles.summaryCard}>
+              {selectedService && (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Service</Text>
+                  <Text style={styles.summaryValue}>{selectedService.name}</Text>
+                </View>
+              )}
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Catégorie</Text>
-                <Text style={styles.summaryValue}>{selectedCategory?.label}</Text>
+                <Text style={styles.summaryValue}>{selectedCategory?.label ?? 'Taxe directe'}</Text>
               </View>
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>Type de taxe</Text>
@@ -672,8 +1107,12 @@ export default function NewPaymentScreen() {
                 </View>
               )}
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Montant total taxe</Text>
+                <Text style={styles.summaryLabel}>Prix unitaire</Text>
                 <Text style={styles.summaryValue}>{formatCurrency(parseFloat(customAmount) || 0)}</Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Quantité</Text>
+                <Text style={styles.summaryValue}>{quantity}</Text>
               </View>
               {chassisNumber && (
                 <View style={styles.summaryRow}>
@@ -748,25 +1187,25 @@ export default function NewPaymentScreen() {
     <View style={styles.container}>
       {/* Progress indicator */}
       <View style={styles.progressContainer}>
-        {['category', 'type', 'details', 'confirm'].map((s, index) => (
+        {progressSteps.map((s, index) => (
           <View key={s} style={styles.progressItem}>
             <View
               style={[
                 styles.progressDot,
-                index <= ['category', 'type', 'details', 'confirm'].indexOf(step)
+                index <= progressSteps.indexOf(step)
                   ? styles.progressDotActive
                   : styles.progressDotInactive,
               ]}
             >
-              {index < ['category', 'type', 'details', 'confirm'].indexOf(step) && (
+              {index < progressSteps.indexOf(step) && (
                 <Ionicons name="checkmark" size={10} color="#FFFFFF" />
               )}
             </View>
-            {index < 3 && (
+            {index < progressSteps.length - 1 && (
               <View
                 style={[
                   styles.progressLine,
-                  index < ['category', 'type', 'details', 'confirm'].indexOf(step)
+                  index < progressSteps.indexOf(step)
                     ? styles.progressLineActive
                     : styles.progressLineInactive,
                 ]}
@@ -879,6 +1318,28 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(123, 97, 255, 0.15)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  continueCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.backgroundCard,
+    borderRadius: rr.xl,
+    padding: rs.lg,
+    marginTop: rs.sm,
+    marginBottom: rs.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+  },
+  continueText: {
+    fontSize: rf.lg,
+    color: Colors.textPrimary,
+    fontWeight: '500',
+  },
+  continueSubtext: {
+    fontSize: rf.sm,
+    color: Colors.textMuted,
+    marginTop: 2,
   },
   optionContent: {
     flex: 1,
@@ -1080,11 +1541,12 @@ const styles = StyleSheet.create({
   counterButton: {
     padding: rs.md,
   },
-  counterValue: {
+  counterInput: {
     fontSize: rf.xl,
     fontWeight: '700',
     color: Colors.primary,
-    minWidth: scale(36),
+    minWidth: scale(56),
+    paddingVertical: 0,
     textAlign: 'center',
   },
   installmentInfo: {

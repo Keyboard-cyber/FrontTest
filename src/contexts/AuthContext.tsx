@@ -1,13 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import { LocalProfile, User, LoginCredentials, LocalTaxCategorie, LocalTaxType, LocalTerminal } from '../types';
+import { LocalProfile, User, LoginCredentials, LocalService, LocalTaxCategorie, LocalTaxType, LocalTerminal } from '../types';
 import { 
   initializeDatabase, 
   getLocalProfile, 
   saveLocalProfile, 
   clearLocalProfile,
+  saveServices,
   saveTaxCategories,
   saveTaxTypes,
   saveLocalTerminal,
+  clearLocalTerminal,
   saveOfflineCredentials,
   verifyOfflineCredentials,
   getOfflineCredentials,
@@ -429,14 +431,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await saveLocalProfile(localProfile);
       console.log('Profil local sauvegardé');
 
+      // 5.b Sauvegarder les noms des services assignés (affichage hors ligne)
+      if (services.length > 0) {
+        const savedAt = new Date().toISOString();
+        const localServices: LocalService[] = services
+          .filter((s: any) => s && s.id)
+          .map((s: any) => ({
+            service_id: s.id,
+            name: s.name || s.label || s.title || `Service #${s.id}`,
+            code: s.code || null,
+            saved_at: savedAt,
+          }));
+        await saveServices(localServices);
+        console.log(`${localServices.length} service(s) sauvegardé(s)`);
+      }
+
       // 5. Sauvegarder les terminaux de l'agent
+      // On repart d'une table vide : sans cela un terminal d'un ancien agent
+      // reste en base et getLocalTerminal() le renvoie à tort.
+      await clearLocalTerminal();
       if (initialData.terminals && initialData.terminals.length > 0) {
         for (const terminal of initialData.terminals) {
+          const terminalId = (terminal as any).id ?? (terminal as any).terminal_id;
+          const ownerId = (terminal as any).user_id ?? userData.id;
           console.log('Terminal brut:', JSON.stringify(terminal, null, 2));
+          // Ignorer un terminal sans identifiant : il produirait terminal_id = 0
+          // produirait des paiements rejetés par le backend.
+          if (!terminalId) {
+            console.warn('Terminal sans identifiant ignoré:', JSON.stringify(terminal));
+            continue;
+          }
           const localTerminal: LocalTerminal = {
-            terminal_id: (terminal as any).id || 0,
+            terminal_id: terminalId,
             terminal_uid: terminal.terminal_uid || (terminal as any).uid || '',
-            user_id: terminal.user_id || userData.id,
+            user_id: ownerId,
             user_uid: (terminal as any).user_uid || userData.uid || localProfile.user_uid || String(userData.id),
             is_blocked: terminal.is_blocked ? 1 : 0,
             last_sync_at: terminal.last_sync_at || null,
@@ -445,6 +473,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           await saveLocalTerminal(localTerminal);
         }
         console.log(`${initialData.terminals.length} terminal(s) sauvegardé(s)`);
+      } else {
+        console.warn('Aucun terminal assigné à cet agent');
       }
 
       // 6. Sauvegarder les catégories de taxes
@@ -470,6 +500,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const localTypes: LocalTaxType[] = initialData.taxTypes.map(type => ({
             tax_type_id: type.id,
             tax_categorie_id: type.tax_categorie_id || (type as any).categorie_id || (type as any).category_id,
+            // Requis pour les taxes directes, qui n'ont pas de catégorie
+            service_id: (type as any).service_id ?? null,
             label: type.label || (type as any).name || (type as any).title || '',
             amount: type.amount || (type as any).price || (type as any).default_amount || 0,
             min_amount: type.min_amount || (type as any).minimum_amount || null,

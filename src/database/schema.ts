@@ -15,6 +15,14 @@ CREATE TABLE IF NOT EXISTS local_profile (
   saved_at TEXT NOT NULL
 );
 
+-- Services assignés à l'agent (noms + codes, pour affichage hors ligne)
+CREATE TABLE IF NOT EXISTS local_services (
+  service_id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  code TEXT,
+  saved_at TEXT NOT NULL
+);
+
 -- Terminal local
 CREATE TABLE IF NOT EXISTS local_terminal (
   terminal_id INTEGER PRIMARY KEY,
@@ -114,6 +122,7 @@ DROP TABLE IF EXISTS local_payments_queue;
 DROP TABLE IF EXISTS local_tax_types;
 DROP TABLE IF EXISTS local_tax_categorie;
 DROP TABLE IF EXISTS local_terminal;
+DROP TABLE IF EXISTS local_services;
 DROP TABLE IF EXISTS local_profile;
 DROP TABLE IF EXISTS sync_state;
 DROP TABLE IF EXISTS offline_credentials;
